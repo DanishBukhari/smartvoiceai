@@ -1,0 +1,23 @@
+{
+  "name": "smartvoiceagent",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.0.0",
+    "@google-cloud/speech": "^7.1.0",
+    "axios": "^1.9.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "node-fetch": "^3.3.2",
+    "openai": "^5.3.0",
+    "twilio": "^5.7.0"
+  }
+}
