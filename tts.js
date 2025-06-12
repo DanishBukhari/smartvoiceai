@@ -7,11 +7,11 @@ const client = new ElevenLabsClient({
 
 async function synthesizeSpeech(text, voiceId = 'aEO01A4wXwd1O8GPgGlF') {
   try {
-    const audio = await client.generate({
-      voice_id: voiceId,
+    const audio = await client.textToSpeech({
+      voiceId: voiceId,
       text: text,
-      model_id: 'eleven_monolingual_v1',
-      voice_settings: {
+      modelId: 'eleven_monolingual_v1',
+      voiceSettings: {
         stability: 0.5,
         similarity_boost: 0.75,
       },

@@ -168,7 +168,7 @@ async function saveContact() {
     phone: stateMachine.clientData.phone,
     address: stateMachine.clientData.address,
     customFields: [
-      { id: 'contacts_issue', value: stateMachine.urgency === 'URGENT' ? `URGENT: ${stateMachine.issueType}` : stateMachine.issueType },
+      { id: 'AKnXqcpVmWwVSKaN4f5Q', value: stateMachine.urgency === 'URGENT' ? `URGENT: ${stateMachine.issueType}` : stateMachine.issueType },
     ],
     tags: ['biz-card-scan', stateMachine.clientData.source?.toLowerCase() || 'unknown'],
   };

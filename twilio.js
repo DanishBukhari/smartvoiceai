@@ -72,7 +72,7 @@ async function handleRecordingStatus(req, res) {
 async function makeOutboundCall(toNumber) {
   try {
     const call = await client.calls.create({
-      url: `https://${process.env.HEROKU_APP_NAME}.herokuapp.com/voice`,
+      url: `https://smartvoiceai-fa77bfa7f137.herokuapp.com/voice`,
       to: toNumber,
       from: process.env.TWILIO_PHONE_NUMBER,
     });
