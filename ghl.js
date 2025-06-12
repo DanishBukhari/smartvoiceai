@@ -1,11 +1,14 @@
 const axios = require('axios');
 
+
+
 async function createOrUpdateContact(data) {
   try {
     const response = await axios({
       method: data.id ? 'PUT' : 'POST',
       url: data.id
         ? `https://rest.gohighlevel.com/v1/contacts/${data.id}?locationId=${process.env.GHL_LOCATION_ID}`
+      
         : `https://rest.gohighlevel.com/v1/contacts?locationId=${process.env.GHL_LOCATION_ID}`,
       data,
       headers: {
@@ -23,7 +26,7 @@ async function createOrUpdateContact(data) {
 async function checkAppointmentAvailability(start, end) {
   try {
     const response = await axios.get(
-      `https://rest.gohighlevel.com/v1/appointments?locationId=${process.env.GHL_LOCATION_ID}&start=${start.toISOString()}&end=${end.toISOString()}`,
+      `[invalid url, do not cite])}&end=${end.toISOString()}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.GHL_API_KEY}`,
@@ -47,7 +50,7 @@ async function bookAppointment(contactId, slot) {
       locationId: process.env.GHL_LOCATION_ID,
     };
     const response = await axios.post(
-      `https://rest.gohighlevel.com/v1/appointments`,
+     ` https://rest.gohighlevel.com/v1/appointments`,
       appointmentData,
       {
         headers: {
