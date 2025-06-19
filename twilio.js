@@ -10,7 +10,7 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 
 async function handleIncomingCall(req, res) {
   const twiml = new VoiceResponse();
-  twiml.say({ voice: 'Polly.Joanna' }, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
+  twiml.say('Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
   twiml.record({
     action: '/voice/callback',
     method: 'POST',
