@@ -2,15 +2,12 @@ const twilio = require('twilio');
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const { transcribeAudio } = require('./stt');
 const { handleInput } = require('./flow');
-// const { synthesizeSpeech } = require('./tts');
 const axios = require('axios');
 const fs = require('fs');
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function handleIncomingCall(req, res) {
-  // Use synthesizeSpeech here
-  // const audioPath = await synthesizeSpeech(responseText);
   const twiml = new VoiceResponse();
   twiml.play('https://your-heroku-app.herokuapp.com/public/introduction.mp3');
   twiml.record({
@@ -23,11 +20,13 @@ async function handleIncomingCall(req, res) {
   res.type('text/xml');
   res.send(twiml.toString());
 }
-const { synthesizeSpeech } = await import('./tts'); 
 
 async function handleRecordingStatus(req, res) {
   const recordingUrl = req.body.RecordingUrl;
   try {
+    // Dynamically import tts.js with the correct file extension
+    const { synthesizeSpeech } = await import('./tts.js');
+
     // Download recording to a temporary file
     const response = await axios.get(recordingUrl, { responseType: 'stream' });
     const tempFilePath = `temp_recording_${Date.now()}.mp3`;
