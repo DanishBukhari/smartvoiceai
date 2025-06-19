@@ -17,11 +17,11 @@ async function addBackgroundNoise(inputPath, outputPath) {
       .on('error', reject);
   });
 }
-await addBackgroundNoise('introduction.mp3')
 
 // const fs = require('fs').promises;
 
 async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
+  await addBackgroundNoise('introduction.mp3')
   try {
     const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
     const client = new ElevenLabsClient({
