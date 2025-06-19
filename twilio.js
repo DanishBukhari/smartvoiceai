@@ -10,13 +10,13 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 async function handleIncomingCall(req, res) {
   const twiml = new VoiceResponse();
   twiml.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/introduction.mp3');
-  twiml.record({
-    action: '/voice/callback',
-    method: 'POST',
-    timeout: 10,
-    transcribe: false,
-    recordingStatusCallback: '/voice/recording-status',
-  });
+  // twiml.record({
+  //   action: '/voice/callback',
+  //   method: 'POST',
+  //   timeout: 10,
+  //   transcribe: false,
+  //   recordingStatusCallback: '/voice/recording-status',
+  // });
   res.type('text/xml');
   res.send(twiml.toString());
 }
@@ -83,5 +83,12 @@ async function makeOutboundCall(toNumber) {
     console.error('Outbound Call Error:', error);
   }
 }
+app.use('/public', express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.mp3')) {
+      res.set('Content-Type', 'audio/mpeg');
+    }
+  }
+}));
 
 module.exports = { handleIncomingCall, handleRecordingStatus, makeOutboundCall };
