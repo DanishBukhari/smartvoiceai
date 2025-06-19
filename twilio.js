@@ -9,7 +9,6 @@ const fs = require('fs');
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function handleIncomingCall(req, res) {
-  const { synthesizeSpeech } = await import('./tts');
   // Use synthesizeSpeech here
   // const audioPath = await synthesizeSpeech(responseText);
   const twiml = new VoiceResponse();
@@ -24,6 +23,7 @@ async function handleIncomingCall(req, res) {
   res.type('text/xml');
   res.send(twiml.toString());
 }
+const { synthesizeSpeech } = await import('./tts'); 
 
 async function handleRecordingStatus(req, res) {
   const recordingUrl = req.body.RecordingUrl;
