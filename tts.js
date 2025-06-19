@@ -5,7 +5,7 @@ const client = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
 });
 
-async function synthesizeSpeech(text, voiceId = 'aEO01A4wXwd1O8GPgGlF') {
+async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
   try {
     const audio = await client.textToSpeech.convert(voiceId, {
       text: text,
