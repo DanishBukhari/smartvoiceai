@@ -2,13 +2,16 @@ const twilio = require('twilio');
 const VoiceResponse = twilio.twiml.VoiceResponse;
 const { transcribeAudio } = require('./stt');
 const { handleInput } = require('./flow');
-const { synthesizeSpeech } = require('./tts');
+// const { synthesizeSpeech } = require('./tts');
 const axios = require('axios');
 const fs = require('fs');
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function handleIncomingCall(req, res) {
+  const { synthesizeSpeech } = await import('./tts');
+  // Use synthesizeSpeech here
+  // const audioPath = await synthesizeSpeech(responseText);
   const twiml = new VoiceResponse();
   twiml.play('https://your-heroku-app.herokuapp.com/public/introduction.mp3');
   twiml.record({
