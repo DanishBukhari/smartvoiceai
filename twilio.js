@@ -1,14 +1,13 @@
 const twilio = require('twilio');
-const VoiceResponse = require('twilio/lib/twiml/VoiceResponse');
-const { transcribeAudio } = require('./stt.js');
-const { handleInput } = require('./flow.js');
-const { synthesizeSpeech } = require('./tts.js');
+const VoiceResponse = twilio.twiml.VoiceResponse;
+const { transcribeAudio } = require('./stt');
+const { handleInput } = require('./flow');
 const axios = require('axios');
-const fs = require('fs').promises;
+const fs = require('fs');
 
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-function handleIncomingCall(req, res) {
+async function handleIncomingCall(req, res) {
   const twiml = new VoiceResponse();
   twiml.play('https://your-heroku-app.herokuapp.com/public/introduction.mp3');
   twiml.record({
@@ -25,6 +24,9 @@ function handleIncomingCall(req, res) {
 async function handleRecordingStatus(req, res) {
   const recordingUrl = req.body.RecordingUrl;
   try {
+    // Dynamically import tts.js with the correct file extension
+    const { synthesizeSpeech } = await import('./tts.js');
+
     // Download recording to a temporary file
     const response = await axios.get(recordingUrl, { responseType: 'stream' });
     const tempFilePath = `temp_recording_${Date.now()}.mp3`;
@@ -52,7 +54,7 @@ async function handleRecordingStatus(req, res) {
     res.send(twiml.toString());
 
     // Clean up temporary file
-    await fs.unlink(tempFilePath);
+    fs.unlinkSync(tempFilePath);
   } catch (error) {
     console.error('Recording Status Error:', error);
     const twiml = new VoiceResponse();
