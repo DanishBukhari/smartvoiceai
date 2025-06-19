@@ -19,8 +19,14 @@ async function addBackgroundNoise(inputPath, outputPath) {
 }
 await addBackgroundNoise('introduction.mp3')
 
+// const fs = require('fs').promises;
+
 async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
   try {
+    const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
+    const client = new ElevenLabsClient({
+      apiKey: process.env.ELEVENLABS_API_KEY,
+    });
     const audio = await client.textToSpeech.convert(voiceId, {
       text: text,
       modelId: 'eleven_monolingual_v1',
@@ -30,12 +36,14 @@ async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
       },
     });
     const outputPath = `output_${Date.now()}.mp3`;
-    await fs.writeFile(outputPath, audio);
+    await fs.writeFile(outputPath, Buffer.from(audio));
     return outputPath;
   } catch (error) {
     console.error('ElevenLabs Error:', error);
     return null;
   }
 }
+
+// module.exports = { synthesizeSpeech };
 
 module.exports = { synthesizeSpeech };
