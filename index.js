@@ -1,9 +1,10 @@
 require('dotenv').config();
 const express = require('express');
 const { handleIncomingCall, handleRecordingStatus } = require('./twilio');
-const path = require('path');
 
 const app = express();
+const path = require('path');
+app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname))); // Serve static files (e.g., audio)
 

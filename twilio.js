@@ -10,7 +10,7 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 
 async function handleIncomingCall(req, res) {
   const twiml = new VoiceResponse();
-  twiml.say('Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
+  twiml.play('https://your-heroku-app.herokuapp.com/public/introduction.mp3');
   twiml.record({
     action: '/voice/callback',
     method: 'POST',
