@@ -1,5 +1,11 @@
 const { getResponse } = require('./nlp');
-const { createOrUpdateContact, checkAppointmentAvailability, bookAppointment } = require('./ghl');
+const { createOrUpdateContact } = require('./ghl');
+const { getAccessToken, getLastAppointment, getNextAvailableSlot, createAppointment } = require('./outlook');
+const { OpenAI } = require('openai');
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const stateMachine = {
   currentState: 'start',
@@ -8,6 +14,7 @@ const stateMachine = {
   issueType: null,
   urgency: null,
   questionIndex: 0,
+  nextSlot: null,
 };
 
 const issueQuestions = {
@@ -44,6 +51,22 @@ const issueQuestions = {
   ],
 };
 
+async function calculateTravelTime(origin, destination) {
+  try {
+    const prompt = `Estimate the driving time in minutes from "${origin}" to "${destination}" in a typical urban area. Provide only the number of minutes.`;
+    const response = await openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 10,
+    });
+    const travelTime = parseInt(response.choices[0].message.content.trim());
+    return isNaN(travelTime) ? 30 : travelTime; // Default to 30 minutes if invalid
+  } catch (error) {
+    console.error('Travel Time Calculation Error:', error);
+    return 30; // Fallback to 30 minutes
+  }
+}
+
 async function handleInput(input) {
   stateMachine.conversationHistory.push({ role: 'user', content: input });
 
@@ -68,6 +91,8 @@ async function handleInput(input) {
     return await confirmClientDetails(input);
   } else if (stateMachine.currentState === 'book_appointment') {
     return await handleAppointmentBooking(input);
+  } else if (stateMachine.currentState === 'confirm_slot') {
+    return await confirmSlot(input);
   } else if (stateMachine.currentState === 'general') {
     return await handleGeneralQuery(input);
   }
@@ -125,7 +150,7 @@ async function confirmClientDetails(input) {
       return "I know this is urgent. Tamsin from our Operations team will get back to you ASAP. Anything else before I let you go?";
     } else {
       stateMachine.currentState = 'book_appointment';
-      return "Would you prefer an appointment in the morning or afternoon?";
+      return "Great! I’ll check our calendar—when would you like your appointment?";
     }
   } else {
     stateMachine.clientData = {};
@@ -135,23 +160,54 @@ async function confirmClientDetails(input) {
 }
 
 async function handleAppointmentBooking(input) {
-  const slots = [
-    { start: new Date('2025-05-28T07:00:00Z'), end: new Date('2025-05-28T09:00:00Z') },
-    { start: new Date('2025-05-28T09:00:00Z'), end: new Date('2025-05-28T11:00:00Z') },
-    { start: new Date('2025-05-28T11:00:00Z'), end: new Date('2025-05-28T13:00:00Z') },
-    { start: new Date('2025-05-28T13:00:00Z'), end: new Date('2025-05-28T15:00:00Z') },
-    { start: new Date('2025-05-28T15:00:00Z'), end: new Date('2025-05-28T17:00:00Z') },
-  ];
-  const isMorning = input.toLowerCase().includes('morning');
-  const availableSlots = slots.filter(slot => isMorning ? slot.start.getUTCHours() < 12 : slot.start.getUTCHours() >= 12);
-  for (const slot of availableSlots) {
-    if (await checkAppointmentAvailability(slot.start, slot.end)) {
-      await saveContact();
-      await bookAppointment(stateMachine.clientData.contactId, slot);
-      return `All set, ${stateMachine.clientData.name}! You’re on for May 28 at ${slot.start.getUTCHours()}:00. We’ll text you the details. Anything else I can help with?`;
-    }
+  const accessToken = await getAccessToken();
+  if (!accessToken) return "I'm sorry, I couldn’t access the calendar. Please try again later.";
+
+  const minStartDate = new Date('2025-06-20T07:00:00Z');
+  const now = new Date();
+  let earliestStartTime = now > minStartDate ? now : minStartDate;
+
+  const lastAppointment = await getLastAppointment(accessToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+  if (lastAppointment) {
+    const lastEndTime = new Date(lastAppointment.end.dateTime);
+    const lastLocation = lastAppointment.location?.displayName || 'Unknown';
+    const travelTime = await calculateTravelTime(lastLocation, stateMachine.clientData.address);
+    const buffer = 30; // 30-minute job buffer
+    earliestStartTime = new Date(Math.max(lastEndTime.getTime(), minStartDate.getTime()) + (travelTime + buffer) * 60 * 1000);
   }
-  return "I’m sorry, no slots are available in the " + (isMorning ? "morning" : "afternoon") + ". Would you like to try another time or date?";
+
+  const nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
+  if (!nextSlot) return "I’m sorry, no slots are available soon. Would you like to try another day?";
+
+  stateMachine.nextSlot = nextSlot;
+  const formattedSlot = nextSlot.toLocaleString('en-US', { timeZone: 'UTC', hour: 'numeric', minute: 'numeric', hour12: true });
+  const confirmation = `Our next available slot is ${formattedSlot} UTC. Does that work for you?`;
+  stateMachine.conversationHistory.push({ role: 'assistant', content: confirmation });
+  stateMachine.currentState = 'confirm_slot';
+  return confirmation;
+}
+
+async function confirmSlot(input) {
+  if (input.toLowerCase().includes('yes') || input.toLowerCase().includes('okay')) {
+    const accessToken = await getAccessToken();
+    const eventDetails = {
+      subject: 'Plumbing Appointment',
+      start: { dateTime: stateMachine.nextSlot.toISOString(), timeZone: 'UTC' },
+      end: { dateTime: new Date(stateMachine.nextSlot.getTime() + 60 * 60 * 1000).toISOString(), timeZone: 'UTC' },
+      location: { displayName: stateMachine.clientData.address },
+    };
+    const appointment = await createAppointment(accessToken, eventDetails);
+    if (appointment) {
+      await saveContact();
+      const formattedTime = stateMachine.nextSlot.toLocaleString('en-US', { timeZone: 'UTC' });
+      return `All set, ${stateMachine.clientData.name}! Your appointment is booked for ${formattedTime} UTC. Anything else?`;
+    } else {
+      return "I’m sorry, I couldn’t book the appointment. Please try again later.";
+    }
+  } else {
+    stateMachine.currentState = 'book_appointment';
+    return "No worries! When would you like your appointment instead?";
+  }
 }
 
 async function handleGeneralQuery(input) {
