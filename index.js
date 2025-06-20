@@ -25,15 +25,12 @@ app.get('/public/Introduction.mp3', (req, res) => {
   });
 });
 
-// Then other middleware
+// Middleware
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.post('/voice', handleIncomingCall);
-// app.post('/voice/callback', handleRecordingStatus);
-app.post('process-speech', processSpeech)
-app.use(express.static('public'));
-// app.post('/voice/recording-status', handleRecordingStatus);
+app.post('/process-speech', processSpeech); // Corrected route
 app.get('/test', (req, res) => {
   res.send('Test successful');
 });
