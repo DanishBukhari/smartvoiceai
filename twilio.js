@@ -83,12 +83,6 @@ async function makeOutboundCall(toNumber) {
     console.error('Outbound Call Error:', error);
   }
 }
-app.use('/public', express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.mp3')) {
-      res.set('Content-Type', 'audio/mpeg');
-    }
-  }
-}));
+
 
 module.exports = { handleIncomingCall, handleRecordingStatus, makeOutboundCall };
