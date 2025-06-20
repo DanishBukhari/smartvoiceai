@@ -1,5 +1,6 @@
 const { ElevenLabsClient } = require('@elevenlabs/elevenlabs-js');
-const fs = require('fs').promises;
+const fs = require('fs');
+const { pipeline } = require('stream');
 const ffmpeg = require('fluent-ffmpeg');
 
 const client = new ElevenLabsClient({
@@ -25,7 +26,7 @@ function addBackgroundNoise(inputPath, outputPath) {
 async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
   console.log('synthesizeSpeech: Called with text', text);
   try {
-    const audio = await client.textToSpeech.convert(voiceId, {
+    const audioStream = await client.textToSpeech.convert(voiceId, {
       text: text,
       modelId: 'eleven_monolingual_v1',
       voiceSettings: {
@@ -34,12 +35,21 @@ async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
       },
     });
     const tempPath = `temp_${Date.now()}.mp3`;
-    await fs.writeFile(tempPath, Buffer.from(audio));
+    await new Promise((resolve, reject) => {
+      pipeline(
+        audioStream,
+        fs.createWriteStream(tempPath),
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
     console.log('synthesizeSpeech: Audio generated', tempPath);
 
     const outputPath = `public/output_${Date.now()}.mp3`;
     await addBackgroundNoise(tempPath, outputPath);
-    await fs.unlink(tempPath);
+    await fs.promises.unlink(tempPath);
     console.log('synthesizeSpeech: Final audio with noise', outputPath);
     return outputPath;
   } catch (error) {

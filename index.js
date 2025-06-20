@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { handleIncomingCall, handleRecordingStatus, makeOutboundCall } = require('./twilio');
+const { handleIncomingCall, makeOutboundCall, processSpeech } = require('./twilio');
 const path = require('path');
 
 const app = express();
@@ -30,8 +30,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.post('/voice', handleIncomingCall);
-app.post('/voice/callback', handleRecordingStatus);
-app.post('/voice/recording-status', handleRecordingStatus);
+// app.post('/voice/callback', handleRecordingStatus);
+app.post('process-speech', processSpeech)
+app.use(express.static('public'));
+// app.post('/voice/recording-status', handleRecordingStatus);
 app.get('/test', (req, res) => {
   res.send('Test successful');
 });
