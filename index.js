@@ -4,6 +4,8 @@ const { handleIncomingCall, handleRecordingStatus, makeOutboundCall } = require(
 const path = require('path');
 
 const app = express();
+
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
