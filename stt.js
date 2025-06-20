@@ -6,15 +6,17 @@ const openai = new OpenAI({
 });
 
 async function transcribeAudio(audioFilePath) {
+  console.log('transcribeAudio: Transcribing', audioFilePath);
   try {
     const transcription = await openai.audio.transcriptions.create({
       file: fs.createReadStream(audioFilePath),
       model: 'whisper-1',
       language: 'en',
     });
+    console.log('transcribeAudio: Transcription', transcription.text);
     return transcription.text || '';
   } catch (error) {
-    console.error('OpenAI STT Error:', error);
+    console.error('transcribeAudio: OpenAI STT error', error.message, error.stack);
     return '';
   }
 }

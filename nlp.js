@@ -5,11 +5,12 @@ const openai = new OpenAI({
 });
 
 async function getResponse(prompt, conversationHistory = []) {
+  console.log('getResponse: Called with prompt', prompt);
   try {
     const messages = [
       {
         role: 'system',
-        content: `You are Robyn, a warm, empathetic receptionist for Usher Fix Plumbing. Speak energetically, loudly, and friendly, using colloquial language and natural fillers (e.g., "Ohh," "Hmm," "Well"). Follow the provided workflow, ask one question at a time, and wait for the answer. Collect name, email, phone, and address for all clients. Do not book appointments before May 28, 2025. Triage urgency based on rules and handle general knowledge questions.`
+        content: `You are Robyn, a friendly, energetic voice agent for Usher Fix Plumbing in Australia. Use ElevenLabs voice and OpenAI to answer plumbing queries naturally. For specific issues (e.g., hot water system), ask related screening questions one at a time. If the customer wants to book an appointment, collect name, email, phone, full address, and special instructions. Book in Outlook from 7 AM to 7 PM UTC, starting May 28, 2025. For second appointments, calculate travel time from the last appointment’s location. Save transcripts and recordings. Answer general plumbing questions or admit if unsure. If asked, confirm you're AI.`
       },
       ...conversationHistory,
       { role: 'user', content: prompt }
@@ -20,9 +21,11 @@ async function getResponse(prompt, conversationHistory = []) {
       max_tokens: 200,
       temperature: 0.7,
     });
-    return completion.choices[0].message.content.trim();
+    const response = completion.choices[0].message.content.trim();
+    console.log('getResponse: Response', response);
+    return response;
   } catch (error) {
-    console.error('OpenAI NLP Error:', error);
+    console.error('getResponse: OpenAI error', error.message, error.stack);
     return "I'm sorry, I didn't catch that. Could you say it again, please?";
   }
 }

@@ -7,8 +7,8 @@ const app = express();
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.mp3')) {
-      res.set('Content-Type', 'audio/mpeg');
+    if (filePath.endsWith('.mp3') || filePath.endsWith('.txt')) {
+      res.set('Content-Type', filePath.endsWith('.mp3') ? 'audio/mpeg' : 'text/plain');
     }
   }
 }));

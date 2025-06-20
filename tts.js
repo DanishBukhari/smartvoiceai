@@ -12,18 +12,18 @@ function addBackgroundNoise(inputPath, outputPath) {
       .audioFilter('aecho=0.8:0.9:1000:0.3')
       .save(outputPath)
       .on('end', () => {
-        console.log('Background noise added:', outputPath);
+        console.log('addBackgroundNoise: Noise added', outputPath);
         resolve();
       })
       .on('error', (err) => {
-        console.error('FFmpeg Error:', err);
+        console.error('addBackgroundNoise: FFmpeg error', err.message, err.stack);
         reject(err);
       });
   });
 }
 
 async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
-  console.log('synthesizeSpeech called with text:', text);
+  console.log('synthesizeSpeech: Called with text', text);
   try {
     const audio = await client.textToSpeech.convert(voiceId, {
       text: text,
@@ -35,15 +35,15 @@ async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
     });
     const tempPath = `temp_${Date.now()}.mp3`;
     await fs.writeFile(tempPath, Buffer.from(audio));
-    console.log('Audio generated:', tempPath);
+    console.log('synthesizeSpeech: Audio generated', tempPath);
 
     const outputPath = `public/output_${Date.now()}.mp3`;
     await addBackgroundNoise(tempPath, outputPath);
     await fs.unlink(tempPath);
-    console.log('Final audio with noise:', outputPath);
+    console.log('synthesizeSpeech: Final audio with noise', outputPath);
     return outputPath;
   } catch (error) {
-    console.error('ElevenLabs Error:', error);
+    console.error('synthesizeSpeech: ElevenLabs error', error.message, error.stack);
     return null;
   }
 }

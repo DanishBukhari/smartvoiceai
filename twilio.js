@@ -8,87 +8,92 @@ const fs = require('fs');
 const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function handleIncomingCall(req, res) {
-  console.log('handleIncomingCall called');
+  console.log('handleIncomingCall: Function called');
   const twiml = new VoiceResponse();
   twiml.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/introduction.mp3');
   twiml.record({
     action: '/voice/callback',
     method: 'POST',
-    timeout: 30,
+    timeout: 60,
     transcribe: false,
     recordingStatusCallback: '/voice/recording-status',
   });
   res.type('text/xml');
   res.send(twiml.toString());
-  console.log('TwiML sent:', twiml.toString());
+  console.log('handleIncomingCall: TwiML sent', twiml.toString());
 }
 
 async function handleRecordingStatus(req, res) {
-  console.log('handleRecordingStatus called');
+  console.log('handleRecordingStatus: Function called');
   const recordingUrl = req.body.RecordingUrl;
-  console.log('Recording URL:', recordingUrl);
+  const callSid = req.body.CallSid;
+  console.log('handleRecordingStatus: Recording URL', recordingUrl, 'Call SID', callSid);
   try {
-    const { synthesizeSpeech } = require('./tts');
-    const response = await axios.get(recordingUrl, { responseType: 'stream' });
-    const tempFilePath = `temp_recording_${Date.now()}.mp3`;
-    const writer = fs.createWriteStream(tempFilePath);
+    console.log('handleRecordingStatus: Downloading recording');
+    const response = await axios.get(recordingUrl, { responseType: 'stream', auth: { username: process.env.TWILIO_ACCOUNT_SID, password: process.env.TWILIO_AUTH_TOKEN } });
+    const recordingPath = `public/recording_${callSid}_${Date.now()}.mp3`;
+    const writer = fs.createWriteStream(recordingPath);
     response.data.pipe(writer);
     await new Promise((resolve, reject) => {
       writer.on('finish', resolve);
       writer.on('error', reject);
     });
-    console.log('Recording downloaded:', tempFilePath);
+    console.log('handleRecordingStatus: Recording saved', recordingPath);
 
-    const transcription = await transcribeAudio(tempFilePath);
-    console.log('Transcription:', transcription);
+    console.log('handleRecordingStatus: Transcribing audio');
+    const transcription = await transcribeAudio(recordingPath);
+    fs.writeFileSync(`public/transcript_${callSid}_${Date.now()}.txt`, transcription);
+    console.log('handleRecordingStatus: Transcription', transcription, 'Saved to file');
+
+    console.log('handleRecordingStatus: Processing input');
     const responseText = await handleInput(transcription);
-    console.log('Response Text:', responseText);
+    console.log('handleRecordingStatus: Response text', responseText);
+
+    console.log('handleRecordingStatus: Synthesizing speech');
+    const { synthesizeSpeech } = require('./tts');
     const audioPath = await synthesizeSpeech(responseText);
-    console.log('Audio Path:', audioPath);
+    console.log('handleRecordingStatus: Audio path', audioPath);
 
     const twiml = new VoiceResponse();
     twiml.play(`https://${req.headers.host}/${audioPath}`);
     twiml.record({
       action: '/voice/callback',
       method: 'POST',
-      timeout: 30,
+      timeout: 60,
       transcribe: false,
       recordingStatusCallback: '/voice/recording-status',
     });
     res.type('text/xml');
     res.send(twiml.toString());
-    console.log('TwiML sent:', twiml.toString());
-
-    fs.unlinkSync(tempFilePath);
-    console.log('Temporary file deleted:', tempFilePath);
+    console.log('handleRecordingStatus: TwiML sent', twiml.toString());
   } catch (error) {
-    console.error('Recording Status Error:', error);
+    console.error('handleRecordingStatus: Error', error.message, error.stack);
     const twiml = new VoiceResponse();
     twiml.say({ voice: 'Polly.Joanna' }, "I'm sorry, I didn't catch that. Could you say it again?");
     twiml.record({
       action: '/voice/callback',
       method: 'POST',
-      timeout: 30,
+      timeout: 60,
       transcribe: false,
       recordingStatusCallback: '/voice/recording-status',
     });
     res.type('text/xml');
     res.send(twiml.toString());
-    console.log('Error TwiML sent:', twiml.toString());
+    console.log('handleRecordingStatus: Error TwiML sent', twiml.toString());
   }
 }
 
 async function makeOutboundCall(toNumber) {
-  console.log('makeOutboundCall called for:', toNumber);
+  console.log('makeOutboundCall: Function called', toNumber);
   try {
     const call = await client.calls.create({
       url: `https://smartvoiceai-fa77bfa7f137.herokuapp.com/voice`,
       to: toNumber,
       from: process.env.TWILIO_PHONE_NUMBER,
     });
-    console.log('Outbound Call Initiated:', call.sid);
+    console.log('makeOutboundCall: Outbound call initiated', call.sid);
   } catch (error) {
-    console.error('Outbound Call Error:', error);
+    console.error('makeOutboundCall: Error', error.message, error.stack);
   }
 }
 
