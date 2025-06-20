@@ -10,7 +10,7 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 async function handleIncomingCall(req, res) {
   console.log('handleIncomingCall: Function called');
   const twiml = new VoiceResponse();
-  twiml.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/introduction.mp3');
+  twiml.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/Introduction.mp3');
   twiml.record({
     action: '/voice/callback',
     method: 'POST',
