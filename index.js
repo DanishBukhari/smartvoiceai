@@ -5,16 +5,30 @@ const path = require('path');
 
 const app = express();
 
-
-app.use(express.urlencoded({ extended: true }));
+// Serve static files first
 app.use(express.static(path.join(__dirname, 'public'), {
   setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.mp3') || filePath.endsWith('.txt')) {
-      res.set('Content-Type', filePath.endsWith('.mp3') ? 'audio/mpeg' : 'text/plain');
+    if (filePath.endsWith('.mp3')) {
+      res.set('Content-Type', 'audio/mpeg');
+    } else if (filePath.endsWith('.txt')) {
+      res.set('Content-Type', 'text/plain');
     }
   }
 }));
+app.get('/public/Introduction.mp3', (req, res) => {
+  const filePath = path.join(__dirname, 'public', 'Introduction.mp3');
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      console.error('Error serving file:', err);
+      res.status(404).send('File not found');
+    }
+  });
+});
 
+// Then other middleware
+app.use(express.urlencoded({ extended: true }));
+
+// Routes
 app.post('/voice', handleIncomingCall);
 app.post('/voice/callback', handleRecordingStatus);
 app.post('/voice/recording-status', handleRecordingStatus);
