@@ -2,31 +2,29 @@ const { ElevenLabsClient } = require('@elevenlabs/elevenlabs-js');
 const fs = require('fs').promises;
 const ffmpeg = require('fluent-ffmpeg');
 
-
 const client = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
 });
 
-
-async function addBackgroundNoise(inputPath, outputPath) {
+function addBackgroundNoise(inputPath, outputPath) {
   return new Promise((resolve, reject) => {
     ffmpeg(inputPath)
-      .audioFilter('aecho=0.8:0.9:1000:0.3') // Adds a subtle echo effect; adjust as needed
+      .audioFilter('aecho=0.8:0.9:1000:0.3')
       .save(outputPath)
-      .on('end', resolve)
-      .on('error', reject);
+      .on('end', () => {
+        console.log('Background noise added:', outputPath);
+        resolve();
+      })
+      .on('error', (err) => {
+        console.error('FFmpeg Error:', err);
+        reject(err);
+      });
   });
 }
 
-// const fs = require('fs').promises;
-
 async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
-  await addBackgroundNoise('introduction.mp3')
+  console.log('synthesizeSpeech called with text:', text);
   try {
-    const { ElevenLabsClient } = await import('@elevenlabs/elevenlabs-js');
-    const client = new ElevenLabsClient({
-      apiKey: process.env.ELEVENLABS_API_KEY,
-    });
     const audio = await client.textToSpeech.convert(voiceId, {
       text: text,
       modelId: 'eleven_monolingual_v1',
@@ -35,15 +33,19 @@ async function synthesizeSpeech(text, voiceId = 'LXy8KWda5yk1Vw6sEV6w') {
         similarityBoost: 0.75,
       },
     });
-    const outputPath = `output_${Date.now()}.mp3`;
-    await fs.writeFile(outputPath, Buffer.from(audio));
+    const tempPath = `temp_${Date.now()}.mp3`;
+    await fs.writeFile(tempPath, Buffer.from(audio));
+    console.log('Audio generated:', tempPath);
+
+    const outputPath = `public/output_${Date.now()}.mp3`;
+    await addBackgroundNoise(tempPath, outputPath);
+    await fs.unlink(tempPath);
+    console.log('Final audio with noise:', outputPath);
     return outputPath;
   } catch (error) {
     console.error('ElevenLabs Error:', error);
     return null;
   }
 }
-
-// module.exports = { synthesizeSpeech };
 
 module.exports = { synthesizeSpeech };

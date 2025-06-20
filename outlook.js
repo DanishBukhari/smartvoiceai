@@ -76,3 +76,4 @@ async function createAppointment(accessToken, eventDetails) {
 }
 
 module.exports = { getAccessToken, getLastAppointment, getNextAvailableSlot, createAppointment };
+
