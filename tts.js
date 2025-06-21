@@ -1,11 +1,3 @@
-const { ElevenLabsClient } = require("@elevenlabs/elevenlabs-js");
-const { Readable } = require("stream");
-const https = require("https");
-
-const client = new ElevenLabsClient({
-  apiKey: process.env.ELEVENLABS_API_KEY,
-});
-
 async function streamTTS(req, res) {
   const text = req.query.text || "";
   const voiceId = "LXy8KWda5yk1Vw6sEV6w";
@@ -17,7 +9,6 @@ async function streamTTS(req, res) {
       "xi-api-key": process.env.ELEVENLABS_API_KEY,
       "Content-Type": "application/json",
       "Accept": "audio/mpeg",
-      
     },
   };
   const postData = JSON.stringify({
@@ -40,5 +31,3 @@ async function streamTTS(req, res) {
   request.write(postData);
   request.end();
 }
-
-module.exports = { streamTTS };
