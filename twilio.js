@@ -1,70 +1,97 @@
 const twilio = require('twilio');
+const axios = require('axios');
 const { VoiceResponse } = twilio.twiml;
+const { transcribe } = require('./stt');
 const { handleInput } = require('./flow');
+const { synthesizeBuffer } = require('./tts');
 
-// Use an explicit APP_URL if you have one, otherwise build from incoming request
-const APP_URL = "https://smartvoiceai-fa77bfa7f137.herokuapp.com";   // e.g. "https://your-heroku-app.herokuapp.com"
+const APP_URL = process.env.APP_URL;
 
 function getBaseUrl(req) {
-  if (APP_URL) return APP_URL;
-  // req.protocol is now trustworthy because of trust proxy
-  return `${req.protocol}://${req.get('Host')}`;
+  return APP_URL || `${req.protocol}://${req.get('Host')}`;
 }
 
+// 1) Incoming call → play intro, then RECORD 5s (or until silence)
 async function handleIncomingCall(req, res) {
-  const baseUrl = getBaseUrl(req);
+  const base = getBaseUrl(req);
   const twiml = new VoiceResponse();
 
-  const gather = twiml.gather({
-    input: 'speech',
-    speechTimeout: 'auto',
-    action: `${baseUrl}/process-speech`,
+  twiml.play(`${base}/Introduction.mp3`);
+  twiml.say('Hi, I’m Robyn from Usher Fix Plumbing. After the beep, please tell me how I can help.');
+  twiml.record({
+    action: `${base}/recording`,
     method: 'POST',
+    maxLength: 5,
+    finishOnKey: '',
+    playBeep: true,
+    timeout: 1,
   });
-  // Play your intro while listening
-  gather.play(`${baseUrl}/Introduction.mp3`);
-  gather.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
-
-  // If silence/fail → retry
+  // If no input:
+  twiml.say("Sorry, I didn't hear anything. Let's try again.");
   twiml.redirect('/voice');
 
   res.type('text/xml').send(twiml.toString());
 }
 
-async function processSpeech(req, res) {
-  const baseUrl = getBaseUrl(req);
-  const transcription = req.body.SpeechResult || '';
-  console.log('User said:', transcription);
+// 2) Recording webhook: Twilio sends us RecordingUrl
+async function handleRecording(req, res) {
+  const recordingUrl = req.body.RecordingUrl + '.mp3';
+  console.log('Received Recording:', recordingUrl);
 
+  // 2a) Fetch recording, transcribe via ElevenLabs
+  let transcription = '';
+  try {
+    const audioResp = await axios.get(recordingUrl, { responseType: 'arraybuffer' });
+    transcription = await transcribe(audioResp.data);
+    console.log('Transcription:', transcription);
+  } catch (e) {
+    console.error('STT error:', e);
+    transcription = '';
+  }
+
+  // 2b) Run through your NLP/flow to get Robyn’s reply text
   let reply;
   try {
-    reply = await handleInput(transcription);
-  } catch (err) {
-    console.error('handleInput error:', err);
-    reply = "Sorry, I'm having trouble right now. Could you repeat that?";
+    reply = transcription
+      ? await handleInput(transcription)
+      : "Sorry, I didn't catch that. Could you please repeat?";
+  } catch (e) {
+    console.error('Flow error:', e);
+    reply = "Sorry, something went wrong. Let's try again.";
   }
   console.log('Reply text:', reply);
 
+  // 2c) Synthesize TTS into a Buffer (with proper Content-Length)
+  let audioBuffer;
+  try {
+    audioBuffer = await synthesizeBuffer(reply);
+  } catch (e) {
+    console.error('TTS Buffer error:', e);
+    audioBuffer = null;
+  }
+
+  // 2d) Respond TwiML: play the buffer, then RECORD again
   const twiml = new VoiceResponse();
-
-  // Stream ElevenLabs TTS
-  twiml.play({
-    url: `${baseUrl}/tts-stream?text=${encodeURIComponent(reply)}`,
-  });
-
-  // Immediately reopen the gather for the next turn
-  const gather = twiml.gather({
-    input: 'speech',
-    speechTimeout: 'auto',
-    action: `${baseUrl}/process-speech`,
+  if (audioBuffer) {
+    // Twilio <Play> supports base64-encoded data URIs up to ~1MB
+    const b64 = audioBuffer.toString('base64');
+    twiml.play(`data:audio/mpeg;base64,${b64}`);
+  } else {
+    twiml.say(reply);
+  }
+  // Loop back into recording for the next turn
+  twiml.record({
+    action: `${getBaseUrl(req)}/recording`,
     method: 'POST',
+    maxLength: 5,
+    finishOnKey: '',
+    playBeep: true,
+    timeout: 1,
   });
-  gather.say('Anything else I can help you with?');
+  twiml.say("Thank you. Goodbye.");
+  twiml.hangup();
 
   res.type('text/xml').send(twiml.toString());
 }
 
-module.exports = {
-  handleIncomingCall,
-  processSpeech,
-};
+module.exports = { handleIncomingCall, handleRecording };
