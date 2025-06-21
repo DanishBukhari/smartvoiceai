@@ -30,7 +30,11 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.post('/voice', handleIncomingCall);
-app.post('/process-speech', processSpeech); // Corrected route
+// app.post('/process-speech', processSpeech); // Corrected route
+app.post('/process-speech', (req, res) => {
+  console.log('SpeechResult:', req.body.SpeechResult);
+  // …
+});
 app.get('/test', (req, res) => {
   res.send('Test successful');
 });

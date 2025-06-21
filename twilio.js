@@ -8,13 +8,13 @@ const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TO
 async function handleIncomingCall(req, res) {
   console.log('handleIncomingCall: Function called');
   const twiml = new VoiceResponse();
-  twiml.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/Introduction.mp3');
-  twiml.gather({
+  const gather =twiml.gather({
     input: 'speech',
     speechTimeout: 'auto',
-    action: '/process-speech',
+    action: 'https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
     method: 'POST',
   });
+  gather.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/Introduction.mp3');
   res.type('text/xml');
   res.send(twiml.toString());
   console.log('handleIncomingCall: TwiML sent', twiml.toString());
@@ -38,7 +38,7 @@ async function processSpeech(req, res) {
     twiml.gather({
       input: 'speech',
       speechTimeout: 'auto',
-      action: '/process-speech',
+      action: 'https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
       method: 'POST',
     });
     res.type('text/xml');
@@ -51,7 +51,7 @@ async function processSpeech(req, res) {
     twiml.gather({
       input: 'speech',
       speechTimeout: 'auto',
-      action: '/process-speech',
+      action: '/https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
       method: 'POST',
     });
     res.type('text/xml');
