@@ -1,15 +1,16 @@
+// twilio.js
 const twilio = require('twilio');
 const { VoiceResponse } = twilio.twiml;
 const { handleInput } = require('./flow');
 const { synthesizeBuffer } = require('./tts');
+const fs = require('fs');
+const path = require('path');
 
-// Base URL override if needed
 const APP_URL = process.env.APP_URL;
 function baseUrl(req) {
   return APP_URL || `${req.protocol}://${req.get('Host')}`;
 }
 
-// 1) Inbound call → play intro inside a Gather
 async function handleVoice(req, res) {
   const B = baseUrl(req);
   const twiml = new VoiceResponse();
@@ -22,12 +23,12 @@ async function handleVoice(req, res) {
   });
   g.play(`${B}/Introduction.mp3`);
   g.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
-  twiml.redirect('/voice'); // retry on silence
+  twiml.redirect('/voice');
   res.type('text/xml').send(twiml.toString());
 }
 
-// 2) Gather → STT result → NLP → inline TTS → reopen Gather
 async function handleSpeech(req, res) {
+  const B = baseUrl(req);
   const userText = req.body.SpeechResult || '';
   console.log('User said:', userText);
 
@@ -38,9 +39,8 @@ async function handleSpeech(req, res) {
     console.error('NL error:', e);
     reply = "Sorry, I'm having trouble. Could you please repeat that?";
   }
-  console.log('Reply:', reply);
 
-  // Synthesize ElevenLabs TTS into a Buffer
+  // 1) Generate the audio buffer
   let audioBuffer;
   try {
     audioBuffer = await synthesizeBuffer(reply);
@@ -48,21 +48,25 @@ async function handleSpeech(req, res) {
     console.error('TTS error:', e);
   }
 
-  const twiml = new VoiceResponse();
+  // 2) Write it to a file named by CallSid
+  let filename = 'fallback.mp3';
   if (audioBuffer) {
-    const b64 = audioBuffer.toString('base64');
-    // Inline data URI; Twilio will play it immediately
-    twiml.play(`data:audio/mpeg;base64,${b64}`);
-  } else {
-    twiml.say(reply);
+    const callSid = req.body.CallSid || Date.now().toString();
+    filename = `${callSid}.mp3`;
+    const outPath = path.join(__dirname, 'public', filename);
+    await fs.promises.writeFile(outPath, audioBuffer);
   }
 
-  // Reopen Gather for the next turn
+  // 3) Respond with a tiny TwiML that plays the static URL
+  const twiml = new VoiceResponse();
+  twiml.play(`${B}/${filename}`);
+
+  // 4) Re‑open gather for the next turn
   const g = twiml.gather({
     input: 'speech',
     speechTimeout: 'auto',
     language: 'en-AU',
-    action: `${baseUrl(req)}/speech`,
+    action: `${B}/speech`,
     method: 'POST',
   });
   g.say('Anything else I can help you with?');
