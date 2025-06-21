@@ -20,7 +20,7 @@ async function handleVoice(req, res) {
     action: `${B}/speech`,
     method: 'POST',
   });
-  g.play("https://smartvoiceai-fa77bfa7f137.herokuapp.com/tts-stream?text=Hello!%20I%27m%20Robyn%2C%20the%20friendly%20voice%20agent%20here%20at%20Usher%20Fix%20Plumbing.%20How%20can%20I%20assist%20you%20with%20your%20plumbing%20needs%20today%3F");
+  g.play(`${B}/Introduction.mp3`);
   g.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
 
   // If no response:
@@ -38,15 +38,13 @@ async function handleSpeech(req, res) {
   let reply;
   try {
     reply = await handleInput(userText);
-    // Shorten the reply for speed
-    reply = "Hi, I’m Robyn. What’s wrong with your toilet?"; // Example
-    console.log('Reply:', reply);
+  
 
     const ttsUrl = `${B}/tts-stream?text=${encodeURIComponent(reply)}`;
     console.log('TTS URL:', ttsUrl);
 
     const twiml = new VoiceResponse();
-    twiml.play({ url: ttsUrl });
+    twiml.play({ttsUrl});
     twiml.pause({ length: 1 }); // 1-second pause
     twiml.gather({
       input: 'speech',
@@ -55,7 +53,7 @@ async function handleSpeech(req, res) {
       action: `${B}/speech`,
       method: 'POST',
     });
-    twiml.say('Anything else I can help you with?');
+    twiml.play({ttsUrl});
     res.type('text/xml').send(twiml.toString());
   } catch (error) {
     console.error('Error in handleSpeech:', error);
