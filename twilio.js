@@ -44,15 +44,15 @@ async function handleSpeech(req, res) {
     console.log('TTS URL:', ttsUrl); // Log the exact URL
 
     const twiml = new VoiceResponse();
-    twiml.play({ url: ttsUrl });
-    twiml.gather({
+    const g = twiml.gather({
       input: 'speech',
       speechTimeout: 'auto',
       language: 'en-AU',
       action: `${B}/speech`,
       method: 'POST',
     });
-    twiml.say('Anything else I can help you with?');
+    g.play({ url: ttsUrl });
+    g.say('Anything else I can help you with?');
     res.type('text/xml').send(twiml.toString());
   } catch (error) {
     console.error('Error in handleSpeech:', error);
