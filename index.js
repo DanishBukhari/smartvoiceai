@@ -1,45 +1,33 @@
 require('dotenv').config();
 const express = require('express');
-const { handleIncomingCall, makeOutboundCall, processSpeech } = require('./twilio');
 const path = require('path');
+const {
+  handleIncomingCall,
+  processSpeech
+} = require('./twilio');
+const { streamTTS } = require('./tts');
 
 const app = express();
 
-// Serve static files first
-app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.mp3')) {
-      res.set('Content-Type', 'audio/mpeg');
-    } else if (filePath.endsWith('.txt')) {
-      res.set('Content-Type', 'text/plain');
-    }
-  }
-}));
-app.get('/public/Introduction.mp3', (req, res) => {
-  const filePath = path.join(__dirname, 'public', 'Introduction.mp3');
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.error('Error serving file:', err);
-      res.status(404).send('File not found');
-    }
-  });
-});
+// Serve your static assets (including Introduction.mp3) from /public
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Middleware
+// Twilio will POST form‑encoded data
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
+// Incoming call entrypoint
 app.post('/voice', handleIncomingCall);
-// app.post('/process-speech', processSpeech); // Corrected route
-app.post('/process-speech', (req, res) => {
-  console.log('SpeechResult:', req.body.SpeechResult);
-  // …
-});
-app.get('/test', (req, res) => {
-  res.send('Test successful');
-});
+
+// Twilio will POST speech results here
+app.post('/process-speech', processSpeech);
+
+// Twilio will GET this to stream TTS audio
+app.get('/tts-stream', streamTTS);
+
+// Healthcheck
+app.get('/test', (req, res) => res.send('OK'));
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Server listening on port ${port}`);
 });

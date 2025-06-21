@@ -1,77 +1,63 @@
 const twilio = require('twilio');
-const VoiceResponse = twilio.twiml.VoiceResponse;
+const { VoiceResponse } = twilio.twiml;
 const { handleInput } = require('./flow');
-const { synthesizeSpeech } = require('./tts');
-
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 async function handleIncomingCall(req, res) {
-  console.log('handleIncomingCall: Function called');
+  const baseUrl = `${req.protocol}://${req.get('Host')}`;
   const twiml = new VoiceResponse();
-  const gather =twiml.gather({
+
+  // Gather + Play intro + prompt
+  const gather = twiml.gather({
     input: 'speech',
     speechTimeout: 'auto',
-    action: 'https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
+    action: `${baseUrl}/process-speech`,
     method: 'POST',
   });
-  gather.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/Introduction.mp3');
-  res.type('text/xml');
-  res.send(twiml.toString());
-  console.log('handleIncomingCall: TwiML sent', twiml.toString());
+  gather.play(`${baseUrl}/Introduction.mp3`);
+  gather.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
+
+  // Fallback if no speech detected
+  twiml.redirect('/voice');
+
+  res.type('text/xml').send(twiml.toString());
 }
 
 async function processSpeech(req, res) {
-  console.log('processSpeech: Function called');
-  const transcription = req.body.SpeechResult;
-  console.log('Transcription received:', transcription);
+  const baseUrl = `${req.protocol}://${req.get('Host')}`;
+  const transcription = req.body.SpeechResult || '';
+  console.log('User said:', transcription);
 
+  // Get response text from your NLP flow
+  let reply;
   try {
-    const responseText = await handleInput(transcription);
-    console.log('Response text:', responseText);
-    const audioPath = await synthesizeSpeech(responseText);
-    if (!audioPath) throw new Error('Failed to synthesize speech');
-    const audioUrl = `https://${req.headers.host}/${audioPath}`;
-    console.log('Audio URL:', audioUrl);
-
-    const twiml = new VoiceResponse();
-    twiml.play(audioUrl);
-    twiml.gather({
-      input: 'speech',
-      speechTimeout: 'auto',
-      action: 'https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
-      method: 'POST',
-    });
-    res.type('text/xml');
-    res.send(twiml.toString());
-    console.log('processSpeech: TwiML sent', twiml.toString());
-  } catch (error) {
-    console.error('processSpeech: Error', error.message, error.stack);
-    const twiml = new VoiceResponse();
-    twiml.say("I'm sorry, I didn't catch that. Could you say it again?");
-    twiml.gather({
-      input: 'speech',
-      speechTimeout: 'auto',
-      action: '/https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
-      method: 'POST',
-    });
-    res.type('text/xml');
-    res.send(twiml.toString());
-    console.log('processSpeech: Error TwiML sent', twiml.toString());
+    reply = await handleInput(transcription);
+  } catch (err) {
+    console.error('Error in handleInput:', err);
+    reply = "Sorry, I'm having trouble right now. Can you try again?";
   }
+  console.log('Reply text:', reply);
+
+  // Build TwiML that streams the TTS and re-opens the gather
+  const twiml = new VoiceResponse();
+
+  // Stream ElevenLabs audio
+  twiml.play({ 
+    url: `${baseUrl}/tts-stream?text=${encodeURIComponent(reply)}`
+  });
+
+  // Re-open a gather for the next user remark
+  const gather = twiml.gather({
+    input: 'speech',
+    speechTimeout: 'auto',
+    action: `${baseUrl}/process-speech`,
+    method: 'POST',
+  });
+  gather.say('Anything else I can help you with?');
+
+  res.type('text/xml').send(twiml.toString());
 }
 
-async function makeOutboundCall(toNumber) {
-  console.log('makeOutboundCall: Function called', toNumber);
-  try {
-    const call = await client.calls.create({
-      url: `https://smartvoiceai-fa77bfa7f137.herokuapp.com/voice`,
-      to: toNumber,
-      from: process.env.TWILIO_PHONE_NUMBER,
-    });
-    console.log('makeOutboundCall: Outbound call initiated', call.sid);
-  } catch (error) {
-    console.error('makeOutboundCall: Error', error.message, error.stack);
-  }
-}
-
-module.exports = { handleIncomingCall, processSpeech, makeOutboundCall };
+module.exports = {
+  handleIncomingCall,
+  processSpeech,
+};
