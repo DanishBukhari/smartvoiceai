@@ -1,4 +1,5 @@
 const { ElevenLabsClient } = require("@elevenlabs/elevenlabs-js");
+const { Readable } = require("stream");
 const client = new ElevenLabsClient({
   apiKey: process.env.ELEVENLABS_API_KEY,
 });
@@ -8,47 +9,43 @@ async function streamTTS(req, res) {
   const voiceId = "LXy8KWda5yk1Vw6sEV6w"; // Your voice ID
 
   try {
-    // Get the audio stream from ElevenLabs
-    const response = await client.textToSpeech.convert(voiceId, {
+    // Get the audio data from ElevenLabs
+    const result = await client.textToSpeech.convert(voiceId, {
       text,
       modelId: "eleven_multilingual_v2",
       voiceSettings: { stability: 0.5, similarityBoost: 0.75 },
     });
-    console.log("Response type:", typeof response, response instanceof Response);
 
-    // Extract the readable stream (assuming response is a fetch-like Response object)
-    const stream = response.body;
+    // Log the result type for debugging
+    console.log("Result type:", typeof result, result instanceof Buffer, result instanceof Readable);
 
-    // Verify that we have a valid stream
-    if (!stream || typeof stream.pipe !== "function") {
-      throw new Error("Invalid stream object returned from ElevenLabs");
+    // Handle different possible return types
+    if (result instanceof Buffer) {
+      // If it’s a Buffer, send it directly
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Content-Length", result.length);
+      res.end(result);
+    } else if (result instanceof Readable) {
+      // If it’s a Readable stream, pipe it to the response
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Transfer-Encoding", "chunked");
+      result.pipe(res);
+    } else if (result && typeof result === "object" && result.body) {
+      // If it’s an object with a body property (e.g., a fetch Response), extract the stream
+      const stream = result.body;
+      if (stream instanceof Readable) {
+        res.setHeader("Content-Type", "audio/mpeg");
+        res.setHeader("Transfer-Encoding", "chunked");
+        stream.pipe(res);
+      } else {
+        throw new Error("Invalid stream object");
+      }
+    } else {
+      // If none of the above, throw an error
+      throw new Error("Unexpected result type from ElevenLabs");
     }
-
-    // Set headers for streaming audio
-    res.setHeader("Content-Type", "audio/mpeg");
-    res.setHeader("Transfer-Encoding", "chunked");
-
-    // Pipe the stream directly to the response
-    stream.pipe(res);
-
-    stream.on("error", (err) => {
-      console.error("Stream error:", err);
-      res.status(500).end();
-    });
-
-    stream.on("end", () => {
-      console.log("Stream ended");
-      res.end();
-    });
   } catch (err) {
-    console.error('TTS error:', err.message);
-    if (err.response && err.response.data) {
-      let errorBody = '';
-      err.response.data.on('data', (chunk) => (errorBody += chunk));
-      err.response.data.on('end', () => {
-        console.error('Error details:', errorBody);
-      });
-    }
+    console.error("TTS error:", err.message);
     res.status(500).end();
   }
 }
