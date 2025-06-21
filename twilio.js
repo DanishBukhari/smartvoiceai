@@ -45,6 +45,7 @@ async function handleSpeech(req, res) {
 
     const twiml = new VoiceResponse();
     twiml.play({ url: ttsUrl });
+    twiml.pause({ length: 2 });
     twiml.gather({
       input: 'speech',
       speechTimeout: 'auto',
