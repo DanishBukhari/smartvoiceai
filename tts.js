@@ -46,22 +46,22 @@ async function streamTTS(req, res) {
   // });
 
   
-  reqEle.on('error', (err) => {
-    console.error('TTS request error:', err);
-    res.status(500).end();
-  });
-
-  reqEle.write(postData);
-  reqEle.end();
-}
-
-//   request.on("error", (err) => {
-//     console.error("Request error:", err.message);
+//   reqEle.on('error', (err) => {
+//     console.error('TTS request error:', err);
 //     res.status(500).end();
 //   });
 
-//   request.write(postData);
-//   request.end();
+//   reqEle.write(postData);
+//   reqEle.end();
 // }
+
+  request.on("error", (err) => {
+    console.error("Request error:", err.message);
+    res.status(500).end();
+  });
+
+  request.write(postData);
+  request.end();
+}
 
 module.exports = { streamTTS };
