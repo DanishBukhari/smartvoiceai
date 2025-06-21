@@ -5,26 +5,32 @@ const client = new ElevenLabsClient({
 
 async function streamTTS(req, res) {
   const text = req.query.text || '';
-  const voiceId = 'LXy8KWda5yk1Vw6sEV6w'; // your preferred voice
+  const voiceId = 'LXy8KWda5yk1Vw6sEV6w'; // Your voice ID
 
   try {
-    // 1) Ask ElevenLabs for a stream
+    // Get the audio stream from ElevenLabs
     const stream = await client.textToSpeech.convert(voiceId, {
       text,
-      modelId: 'eleven_monolingual_v3',    // v3 model
+      modelId: 'eleven_monolingual_v3',
       voiceSettings: { stability: 0.5, similarityBoost: 0.75 },
     });
 
-    // 2) Buffer the entire response
-    const buffers = [];
-    for await (const chunk of stream) buffers.push(chunk);
-    const audio = Buffer.concat(buffers);
-
-    // 3) Send with correct headers so Twilio will play
+    // Set headers for streaming audio
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', audio.length);
-    res.end(audio);
+    res.setHeader('Transfer-Encoding', 'chunked');
 
+    // Pipe the stream directly to the response
+    stream.pipe(res);
+
+    stream.on('error', (err) => {
+      console.error('Stream error:', err);
+      res.status(500).end();
+    });
+
+    stream.on('end', () => {
+      console.log('Stream ended');
+      res.end();
+    });
   } catch (err) {
     console.error('TTS error:', err);
     res.status(500).end();
