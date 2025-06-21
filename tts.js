@@ -31,6 +31,7 @@ async function streamTTS(req, res) {
   const request = https.request(options, (response) => {
     res.setHeader("Content-Type", "audio/mpeg");
     res.setHeader("Transfer-Encoding", "chunked");
+    res.setHeader('Content-Length', audioBuffer.length);
     response.pipe(res);
   });
 
