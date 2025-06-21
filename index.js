@@ -1,17 +1,41 @@
 require('dotenv').config();
 const express = require('express');
+const { handleIncomingCall, makeOutboundCall, processSpeech } = require('./twilio');
 const path = require('path');
-const { handleIncomingCall, handleRecording } = require('./twilio');
 
 const app = express();
-app.enable('trust proxy');
+
+// Serve static files first
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.mp3')) {
+      res.set('Content-Type', 'audio/mpeg');
+    } else if (filePath.endsWith('.txt')) {
+      res.set('Content-Type', 'text/plain');
+    }
+  }
+}));
+app.get('/public/Introduction.mp3', (req, res) => {
+  const filePath = path.join(__dirname, 'public', 'Introduction.mp3');
+  res.sendFile(filePath, (err) => {
+    if (err) {
+      console.error('Error serving file:', err);
+      res.status(404).send('File not found');
+    }
+  });
+});
+
+// Middleware
 app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
 
+// Routes
 app.post('/voice', handleIncomingCall);
-app.post('/recording', handleRecording);   // receives RecordingUrl from Twilio
-
-app.get('/test', (_, res) => res.send('OK'));
+app.post('/process-speech', processSpeech); // Corrected route
+app.get('/test', (req, res) => {
+  res.send('Test successful');
+});
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Listening on ${port}`));
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});

@@ -1,12 +1,24 @@
-const { ElevenLabsClient } = require('@elevenlabs/elevenlabs-js');
-const client = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY });
+const { OpenAI } = require('openai');
+const fs = require('fs');
 
-async function transcribe(audioBuffer) {
-  // ElevenLabs ASR endpoint; adjust model name if needed
-  const result = await client.speech.recognize(audioBuffer, {
-    model: 'eleven_monolingual_v1',
-  });
-  return result.text.trim();
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+async function transcribeAudio(audioFilePath) {
+  console.log('transcribeAudio: Transcribing', audioFilePath);
+  try {
+    const transcription = await openai.audio.transcriptions.create({
+      file: fs.createReadStream(audioFilePath),
+      model: 'whisper-1',
+      language: 'en',
+    });
+    console.log('transcribeAudio: Transcription', transcription.text);
+    return transcription.text || '';
+  } catch (error) {
+    console.error('transcribeAudio: OpenAI STT error', error.message, error.stack);
+    return '';
+  }
 }
 
-module.exports = { transcribe };
+module.exports = { transcribeAudio };
