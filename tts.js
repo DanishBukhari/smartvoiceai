@@ -9,13 +9,6 @@ const client = new ElevenLabsClient({
 async function streamTTS(req, res) {
   const text = req.query.text || "";
   const voiceId = "LXy8KWda5yk1Vw6sEV6w";
-
-    const postData = JSON.stringify({
-    text,
-    model_id: "eleven_flash_v2.5",
-    voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-  });
-
   const options = {
     hostname: "api.elevenlabs.io",
     path: `/v1/text-to-speech/${voiceId}/stream`,
@@ -24,9 +17,14 @@ async function streamTTS(req, res) {
       "xi-api-key": process.env.ELEVENLABS_API_KEY,
       "Content-Type": "application/json",
       "Accept": "audio/mpeg",
-      'Content-Length': Buffer.byteLength(postData),
+      
     },
   };
+  const postData = JSON.stringify({
+    text,
+    model_id: "eleven_flash_v2.5",
+    voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+  });
 
   const request = https.request(options, (response) => {
     res.setHeader("Content-Type", "audio/mpeg");
