@@ -28,22 +28,22 @@ async function streamTTS(req, res) {
     },
   };
 
-  // const request = https.request(options, (response) => {
-  //   res.setHeader("Content-Type", "audio/mpeg");
-  //   res.setHeader("Transfer-Encoding", "chunked");
-  //   response.pipe(res);
-  // });
-
-  const chunks = [];
-  const reqEle = https.request(options, (eleRes) => {
-    eleRes.on('data', (chunk) => chunks.push(chunk));
-    eleRes.on('end', () => {
-      const audioBuffer = Buffer.concat(chunks);
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Content-Length', audioBuffer.length);
-      res.end(audioBuffer);
-    });
+  const request = https.request(options, (response) => {
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("Transfer-Encoding", "chunked");
+    response.pipe(res);
   });
+
+  // const chunks = [];
+  // const reqEle = https.request(options, (eleRes) => {
+  //   eleRes.on('data', (chunk) => chunks.push(chunk));
+  //   eleRes.on('end', () => {
+  //     const audioBuffer = Buffer.concat(chunks);
+  //     res.setHeader('Content-Type', 'audio/mpeg');
+  //     res.setHeader('Content-Length', audioBuffer.length);
+  //     res.end(audioBuffer);
+  //   });
+  // });
 
   
   reqEle.on('error', (err) => {
