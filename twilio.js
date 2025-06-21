@@ -44,7 +44,7 @@ async function handleSpeech(req, res) {
     console.log('TTS URL:', ttsUrl);
 
     const twiml = new VoiceResponse();
-    twiml.play(`${B}/Introduction.mp3`);
+    twiml.play({ttsUrl});
     twiml.pause({ length: 1 }); // 1-second pause
     twiml.gather({
       input: 'speech',
