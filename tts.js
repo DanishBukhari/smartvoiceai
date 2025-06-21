@@ -14,6 +14,7 @@ async function streamTTS(req, res) {
       modelId: "eleven_multilingual_v2",
       voiceSettings: { stability: 0.5, similarityBoost: 0.75 },
     });
+    console.log("Response type:", typeof response, response instanceof Response);
 
     // Extract the readable stream (assuming response is a fetch-like Response object)
     const stream = response.body;
