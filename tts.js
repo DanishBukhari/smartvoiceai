@@ -19,7 +19,7 @@ async function streamTTS(req, res) {
       "xi-api-key": process.env.ELEVENLABS_API_KEY,
       "Content-Type": "application/json",
       "Accept": "audio/mpeg",
-      'Content-Length': Buffer.byteLength(postData),
+      // 'Content-Length': Buffer.byteLength(postData),
     },
   };
   const postData = JSON.stringify({
