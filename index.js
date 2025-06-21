@@ -9,22 +9,25 @@ const { streamTTS } = require('./tts');
 
 const app = express();
 
-// Serve your static assets (including Introduction.mp3) from /public
+// Trust the Heroku proxy so req.protocol is correct
+app.enable('trust proxy');
+
+// Serve static assets (Introduction.mp3 lives in /public)
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Twilio will POST form‑encoded data
+// Parse Twilio POSTs
 app.use(express.urlencoded({ extended: true }));
 
-// Incoming call entrypoint
+// Incoming call → /voice
 app.post('/voice', handleIncomingCall);
 
-// Twilio will POST speech results here
+// Speech result → /process-speech
 app.post('/process-speech', processSpeech);
 
-// Twilio will GET this to stream TTS audio
+// Twilio fetches TTS stream here
 app.get('/tts-stream', streamTTS);
 
-// Healthcheck
+// Health check
 app.get('/test', (req, res) => res.send('OK'));
 
 const port = process.env.PORT || 3000;
