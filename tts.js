@@ -39,3 +39,5 @@ async function streamTTS(req, res) {
   request.write(postData);
   request.end();
 }
+
+module.exports = { streamTTS };
