@@ -11,7 +11,7 @@ async function streamTTS(req, res) {
     // Get the audio stream from ElevenLabs
     const stream = await client.textToSpeech.convert(voiceId, {
       text,
-      modelId: 'eleven_monolingual_v3',
+      modelId: 'eleven_multilingual_v2',
       voiceSettings: { stability: 0.5, similarityBoost: 0.75 },
     });
 
