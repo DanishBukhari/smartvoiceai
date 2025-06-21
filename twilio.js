@@ -1,77 +1,65 @@
 const twilio = require('twilio');
-const VoiceResponse = twilio.twiml.VoiceResponse;
+const { VoiceResponse } = twilio.twiml;
 const { handleInput } = require('./flow');
-const { synthesizeSpeech } = require('./tts');
 
-const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// Optional override if your APP_URL isn’t coming through correctly
+const APP_URL = process.env.APP_URL;  
 
-async function handleIncomingCall(req, res) {
-  console.log('handleIncomingCall: Function called');
+function baseUrl(req) {
+  return APP_URL || `${req.protocol}://${req.get('Host')}`;
+}
+
+// 1) Inbound call → Play intro *inside* a Gather
+async function handleVoice(req, res) {
+  const B = baseUrl(req);
   const twiml = new VoiceResponse();
-  const gather =twiml.gather({
+  const g = twiml.gather({
     input: 'speech',
     speechTimeout: 'auto',
-    action: 'https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
+    language: 'en-AU',
+    action: `${B}/speech`,
     method: 'POST',
   });
-  gather.play('https://smartvoiceai-fa77bfa7f137.herokuapp.com/public/Introduction.mp3');
-  res.type('text/xml');
-  res.send(twiml.toString());
-  console.log('handleIncomingCall: TwiML sent', twiml.toString());
+  g.play(`${B}/Introduction.mp3`);
+  g.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
+
+  // If no response:
+  twiml.redirect('/voice');
+
+  res.type('text/xml').send(twiml.toString());
 }
 
-async function processSpeech(req, res) {
-  console.log('processSpeech: Function called');
-  const transcription = req.body.SpeechResult;
-  console.log('Transcription received:', transcription);
+// 2) Gather → STT result → NLP → stream TTS → reopen gather
+async function handleSpeech(req, res) {
+  const B = baseUrl(req);
+  const userText = req.body.SpeechResult || '';
+  console.log('User said:', userText);
 
+  let reply;
   try {
-    const responseText = await handleInput(transcription);
-    console.log('Response text:', responseText);
-    const audioPath = await synthesizeSpeech(responseText);
-    if (!audioPath) throw new Error('Failed to synthesize speech');
-    const audioUrl = `https://${req.headers.host}/${audioPath}`;
-    console.log('Audio URL:', audioUrl);
-
-    const twiml = new VoiceResponse();
-    twiml.play(audioUrl);
-    twiml.gather({
-      input: 'speech',
-      speechTimeout: 'auto',
-      action: 'https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
-      method: 'POST',
-    });
-    res.type('text/xml');
-    res.send(twiml.toString());
-    console.log('processSpeech: TwiML sent', twiml.toString());
-  } catch (error) {
-    console.error('processSpeech: Error', error.message, error.stack);
-    const twiml = new VoiceResponse();
-    twiml.say("I'm sorry, I didn't catch that. Could you say it again?");
-    twiml.gather({
-      input: 'speech',
-      speechTimeout: 'auto',
-      action: '/https://smartvoiceai-fa77bfa7f137.herokuapp.com/process-speech',
-      method: 'POST',
-    });
-    res.type('text/xml');
-    res.send(twiml.toString());
-    console.log('processSpeech: Error TwiML sent', twiml.toString());
+    reply = await handleInput(userText);
+  } catch (e) {
+    console.error('NLProc error', e);
+    reply = "Sorry, I'm having trouble right now. Could you repeat that?";
   }
+  console.log('Reply:', reply);
+
+  const twiml = new VoiceResponse();
+  // 2a) Play Robyn’s ElevenLabs voice
+  twiml.play({ 
+    url: `${B}/tts-stream?text=${encodeURIComponent(reply)}` 
+  });
+  // 2b) Re‑open gather for next turn
+  const g = twiml.gather({
+    input: 'speech',
+    speechTimeout: 'auto',
+    language: 'en-AU',
+    action: `${B}/speech`,
+    method: 'POST',
+  });
+  g.say('Anything else I can help you with?');
+
+  res.type('text/xml').send(twiml.toString());
 }
 
-async function makeOutboundCall(toNumber) {
-  console.log('makeOutboundCall: Function called', toNumber);
-  try {
-    const call = await client.calls.create({
-      url: `https://smartvoiceai-fa77bfa7f137.herokuapp.com/voice`,
-      to: toNumber,
-      from: process.env.TWILIO_PHONE_NUMBER,
-    });
-    console.log('makeOutboundCall: Outbound call initiated', call.sid);
-  } catch (error) {
-    console.error('makeOutboundCall: Error', error.message, error.stack);
-  }
-}
-
-module.exports = { handleIncomingCall, processSpeech, makeOutboundCall };
+module.exports = { handleVoice, handleSpeech };

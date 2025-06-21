@@ -1,41 +1,31 @@
 require('dotenv').config();
 const express = require('express');
-const { handleIncomingCall, makeOutboundCall, processSpeech } = require('./twilio');
 const path = require('path');
+const { handleVoice, handleSpeech } = require('./twilio');
+const { streamTTS } = require('./tts');
 
 const app = express();
+// Trust Heroku proxy so req.protocol is accurate
+app.enable('trust proxy');
 
-// Serve static files first
-app.use(express.static(path.join(__dirname, 'public'), {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith('.mp3')) {
-      res.set('Content-Type', 'audio/mpeg');
-    } else if (filePath.endsWith('.txt')) {
-      res.set('Content-Type', 'text/plain');
-    }
-  }
-}));
-app.get('/public/Introduction.mp3', (req, res) => {
-  const filePath = path.join(__dirname, 'public', 'Introduction.mp3');
-  res.sendFile(filePath, (err) => {
-    if (err) {
-      console.error('Error serving file:', err);
-      res.status(404).send('File not found');
-    }
-  });
-});
+// Serve static (Introduction.mp3 in /public)
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Middleware
+// Parse Twilio POST
 app.use(express.urlencoded({ extended: true }));
 
-// Routes
-app.post('/voice', handleIncomingCall);
-app.post('/process-speech', processSpeech); // Corrected route
-app.get('/test', (req, res) => {
-  res.send('Test successful');
-});
+// Twilio calls here on inbound
+app.post('/voice', handleVoice);
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+// Twilio Gather posts here with SpeechResult
+app.post('/speech', handleSpeech);
+
+// Twilio fetches TTS here
+app.get('/tts-stream', streamTTS);
+
+// Healthcheck
+app.get('/test', (_, res) => res.send('OK'));
+
+app.listen(process.env.PORT||3000, () => 
+  console.log(`Listening on ${process.env.PORT||3000}`)
+);
