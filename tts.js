@@ -1,20 +1,13 @@
-const { ElevenLabsClient } = require("@elevenlabs/elevenlabs-js");
-const { Readable } = require("stream");
-const https = require("https");
+const https = require('https');
 
-const client = new ElevenLabsClient({
-  apiKey: process.env.ELEVENLABS_API_KEY,
-});
-
-async function streamTTS(req, res) {
-  const text = req.query.text || "";
-  const voiceId = "LXy8KWda5yk1Vw6sEV6w";
+async function synthesizeBuffer(text) {
+  const voiceId = 'LXy8KWda5yk1Vw6sEV6w';
   const postData = JSON.stringify({
     text,
-    model_id: "eleven_multilingual_v2",
+    model_id: 'eleven_multilingual_v2', // or v3 if available
     voice_settings: { stability: 0.5, similarity_boost: 0.75 },
   });
-  
+
   const options = {
     hostname: 'api.elevenlabs.io',
     path: `/v1/text-to-speech/${voiceId}/stream`,
@@ -27,25 +20,16 @@ async function streamTTS(req, res) {
     },
   };
 
-  // Buffer all chunks before responding
-  const chunks = [];
-  const reqEle = https.request(options, (eleRes) => {
-    eleRes.on('data', (chunk) => chunks.push(chunk));
-    eleRes.on('end', () => {
-      const audioBuffer = Buffer.concat(chunks);
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Content-Length', audioBuffer.length);
-      res.end(audioBuffer);
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    const req = https.request(options, (res) => {
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
     });
+    req.on('error', reject);
+    req.write(postData);
+    req.end();
   });
-
-  reqEle.on('error', (err) => {
-    console.error('TTS request error:', err);
-    res.status(500).end();
-  });
-
-  reqEle.write(postData);
-  reqEle.end();
 }
 
-module.exports = { streamTTS };
+module.exports = { synthesizeBuffer };

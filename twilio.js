@@ -1,15 +1,15 @@
 const twilio = require('twilio');
 const { VoiceResponse } = twilio.twiml;
 const { handleInput } = require('./flow');
+const { synthesizeBuffer } = require('./tts');
 
-// Optional override if your APP_URL isn’t coming through correctly
-const APP_URL = process.env.APP_URL;  
-
+// Base URL override if needed
+const APP_URL = process.env.APP_URL;
 function baseUrl(req) {
   return APP_URL || `${req.protocol}://${req.get('Host')}`;
 }
 
-// 1) Inbound call → Play intro *inside* a Gather
+// 1) Inbound call → play intro inside a Gather
 async function handleVoice(req, res) {
   const B = baseUrl(req);
   const twiml = new VoiceResponse();
@@ -22,51 +22,52 @@ async function handleVoice(req, res) {
   });
   g.play(`${B}/Introduction.mp3`);
   g.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
-
-  // If no response:
-  twiml.redirect('/voice');
-
+  twiml.redirect('/voice'); // retry on silence
   res.type('text/xml').send(twiml.toString());
 }
 
-// 2) Gather → STT result → NLP → stream TTS → reopen gather
+// 2) Gather → STT result → NLP → inline TTS → reopen Gather
 async function handleSpeech(req, res) {
-  const B = baseUrl(req);
   const userText = req.body.SpeechResult || '';
   console.log('User said:', userText);
 
   let reply;
   try {
     reply = await handleInput(userText);
-  
-
-    const ttsUrl = `${B}/tts-stream?text=${encodeURIComponent(reply)}`;
-    console.log('TTS URL:', ttsUrl);
-
-    const twiml = new VoiceResponse();
-    twiml.play({ttsUrl});
-    twiml.pause({ length: 1 }); // 1-second pause
-    twiml.gather({
-      input: 'speech',
-      speechTimeout: 'auto',
-      language: 'en-AU',
-      action: `${B}/speech`,
-      method: 'POST',
-    });
-    twiml.play({ttsUrl});
-    res.type('text/xml').send(twiml.toString());
-  } catch (error) {
-    console.error('Error in handleSpeech:', error);
-    const twiml = new VoiceResponse();
-    twiml.say("Sorry, I'm having trouble right now. Could you repeat that?");
-    twiml.gather({
-      input: 'speech',
-      speechTimeout: 'auto',
-      language: 'en-AU',
-      action: `${B}/speech`,
-      method: 'POST',
-    });
-    res.type('text/xml').send(twiml.toString());
+  } catch (e) {
+    console.error('NL error:', e);
+    reply = "Sorry, I'm having trouble. Could you please repeat that?";
   }
+  console.log('Reply:', reply);
+
+  // Synthesize ElevenLabs TTS into a Buffer
+  let audioBuffer;
+  try {
+    audioBuffer = await synthesizeBuffer(reply);
+  } catch (e) {
+    console.error('TTS error:', e);
+  }
+
+  const twiml = new VoiceResponse();
+  if (audioBuffer) {
+    const b64 = audioBuffer.toString('base64');
+    // Inline data URI; Twilio will play it immediately
+    twiml.play(`data:audio/mpeg;base64,${b64}`);
+  } else {
+    twiml.say(reply);
+  }
+
+  // Reopen Gather for the next turn
+  const g = twiml.gather({
+    input: 'speech',
+    speechTimeout: 'auto',
+    language: 'en-AU',
+    action: `${baseUrl(req)}/speech`,
+    method: 'POST',
+  });
+  g.say('Anything else I can help you with?');
+
+  res.type('text/xml').send(twiml.toString());
 }
+
 module.exports = { handleVoice, handleSpeech };

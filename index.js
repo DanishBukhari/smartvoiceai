@@ -2,30 +2,25 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { handleVoice, handleSpeech } = require('./twilio');
-const { streamTTS } = require('./tts');
 
 const app = express();
-// Trust Heroku proxy so req.protocol is accurate
 app.enable('trust proxy');
 
-// Serve static (Introduction.mp3 in /public)
+// Serve your intro MP3
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Parse Twilio POST
+// Parse Twilio’s POSTs
 app.use(express.urlencoded({ extended: true }));
 
-// Twilio calls here on inbound
+// Incoming call → welcome & gather
 app.post('/voice', handleVoice);
 
-// Twilio Gather posts here with SpeechResult
+// Twilio gather result → NLP + inline TTS
 app.post('/speech', handleSpeech);
-
-// Twilio fetches TTS here
-app.get('/tts-stream', streamTTS);
 
 // Healthcheck
 app.get('/test', (_, res) => res.send('OK'));
 
-app.listen(process.env.PORT||3000, () => 
-  console.log(`Listening on ${process.env.PORT||3000}`)
+app.listen(process.env.PORT || 3000, () =>
+  console.log(`Listening on ${process.env.PORT || 3000}`)
 );
