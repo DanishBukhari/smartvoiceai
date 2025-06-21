@@ -38,29 +38,37 @@ async function handleSpeech(req, res) {
   let reply;
   try {
     reply = await handleInput(userText);
+    // Shorten the reply for speed
+    reply = "Hi, I’m Robyn. What’s wrong with your toilet?"; // Example
     console.log('Reply:', reply);
-  } catch (e) {
-    console.error('NLProc error', e);
-    reply = "Sorry, I'm having trouble right now. Could you repeat that?";
+
+    const ttsUrl = `${B}/tts-stream?text=${encodeURIComponent(reply)}`;
+    console.log('TTS URL:', ttsUrl);
+
+    const twiml = new VoiceResponse();
+    twiml.play({ url: ttsUrl });
+    twiml.pause({ length: 1 }); // 1-second pause
+    twiml.gather({
+      input: 'speech',
+      speechTimeout: 'auto',
+      language: 'en-AU',
+      action: `${B}/speech`,
+      method: 'POST',
+    });
+    twiml.say('Anything else I can help you with?');
+    res.type('text/xml').send(twiml.toString());
+  } catch (error) {
+    console.error('Error in handleSpeech:', error);
+    const twiml = new VoiceResponse();
+    twiml.say("Sorry, I'm having trouble right now. Could you repeat that?");
+    twiml.gather({
+      input: 'speech',
+      speechTimeout: 'auto',
+      language: 'en-AU',
+      action: `${B}/speech`,
+      method: 'POST',
+    });
+    res.type('text/xml').send(twiml.toString());
   }
-  console.log('Reply:', reply);
-
-  const twiml = new VoiceResponse();
-  // 2a) Play Robyn’s ElevenLabs voice
-  twiml.play({ 
-    url: `${B}/tts-stream?text=${encodeURIComponent(reply)}` 
-  });
-  // 2b) Re‑open gather for next turn
-  const g = twiml.gather({
-    input: 'speech',
-    speechTimeout: 'auto',
-    language: 'en-AU',
-    action: `${B}/speech`,
-    method: 'POST',
-  });
-  g.say('Anything else I can help you with?');
-
-  res.type('text/xml').send(twiml.toString());
 }
-
 module.exports = { handleVoice, handleSpeech };
