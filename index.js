@@ -21,6 +21,9 @@ app.post('/speech', handleSpeech);
 // Healthcheck
 app.get('/test', (_, res) => res.send('OK'));
 
+// Add this for root path
+app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
+
 app.listen(process.env.PORT || 3000, () =>
   console.log(`Listening on ${process.env.PORT || 3000}`)
 );
