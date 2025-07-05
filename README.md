@@ -134,4 +134,3 @@ ISC
 
 ## Support
 
-For support, contact [your-email@example.com] 
