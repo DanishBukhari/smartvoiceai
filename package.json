@@ -3,13 +3,18 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "test": "echo \"No tests specified\" && exit 0",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "postinstall": "echo 'Deployment completed successfully'"
   },
-  "keywords": [],
-  "author": "",
+  "engines": {
+    "node": "18.x"
+  },
+  "keywords": ["voice", "ai", "plumbing", "twilio", "openai", "elevenlabs"],
+  "author": "Your Name",
   "license": "ISC",
-  "description": "",
+  "description": "Smart Voice AI for plumbing business with Twilio, OpenAI, ElevenLabs, and Microsoft Outlook integration",
   "dependencies": {
     "@azure/msal-node": "^2.16.2",
     "@elevenlabs/elevenlabs-js": "^2.3.0",

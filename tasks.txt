@@ -1,0 +1,19 @@
+Changelog of Recent Updates:
+
+- Audio Improvements:
+  • Edited the Introduction.mp3 file to reduce its length from 6 seconds to 4 seconds by removing delays.
+
+- GoHighLevel (GHL) Integration Fixes:
+  • Corrected the API endpoint URL in the checkAppointmentAvailability function in ghl.js.
+  • Fixed the URL formatting in the bookAppointment function in ghl.js.
+
+- CRM Feature Enhancement:
+  • Added logic to save customer contact information to GoHighLevel CRM when an appointment is booked (in flow.js).
+  • Imported createOrUpdateContact from ghl.js and used it in the collectSpecialInstructions function.
+
+- Code Quality:
+  • Standardized quotation marks in flow.js for consistency and to avoid encoding issues.
+
+- Environment Configuration:
+  • Embedded all API keys directly in the code to eliminate dependency on .env file.
+  • Updated OpenAI, ElevenLabs, Outlook, GoHighLevel, and Twilio configurations with hardcoded values. 

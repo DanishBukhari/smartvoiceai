@@ -1,5 +1,7 @@
+//the scenarios of the texts
 const { getResponse } = require('./nlp');
 const { getAccessToken, getLastAppointment, getNextAvailableSlot, createAppointment } = require('./outlook');
+const { createOrUpdateContact } = require('./ghl');
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
@@ -17,7 +19,7 @@ const stateMachine = {
 
 const issueQuestions = {
   'toilet': [
-    "What’s happening with your toilet? Blocked, leaking, running, or not flushing?",
+    "What's happening with your toilet? Blocked, leaking, running, or not flushing?",
     "Is it still leaking or has it stopped?",
     "How many toilets or showers do you have?",
   ],
@@ -26,7 +28,7 @@ const issueQuestions = {
     "Is it gas, electric, or solar?",
     "Any leaks—steady drip or fast?",
     "How old is it—under 10 years or over?",
-    "What’s the tank size—125L, 250L, 315L, or other?",
+    "What's the tank size—125L, 250L, 315L, or other?",
   ],
   'burst/leak': [
     "Has the water been shut off, or is it still running?",
@@ -150,9 +152,9 @@ async function collectClientDetails(input) {
   if (currentDetail) {
     if (input) stateMachine.clientData[currentDetail] = input;
     const prompts = {
-      name: "What’s your full name, please?",
+      name: "What's your full name, please?",
       email: "Could I have your email address?",
-      phone: "What’s your phone number?",
+      phone: "What's your phone number?",
       address: "And your full address?",
     };
     const response = await getResponse(prompts[currentDetail], stateMachine.conversationHistory);
@@ -173,7 +175,7 @@ async function handleAppointmentBooking(input) {
   const accessToken = await getAccessToken();
   if (!accessToken) {
     console.error('handleAppointmentBooking: No access token');
-    return "Sorry, I can’t access the calendar right now. Please try again later.";
+    return "Sorry, I can't access the calendar right now. Please try again later.";
   }
 
   const minStartDate = new Date('2025-05-28T07:00:00Z');
@@ -225,6 +227,25 @@ async function confirmSlot(input) {
 async function collectSpecialInstructions(input) {
   console.log('collectSpecialInstructions: User input', input);
   stateMachine.clientData.specialInstructions = input;
+
+  // Save contact to GHL
+  try {
+    const contactData = {
+      firstName: stateMachine.clientData.name?.split(' ')[0] || '',
+      lastName: stateMachine.clientData.name?.split(' ').slice(1).join(' ') || '',
+      email: stateMachine.clientData.email,
+      phone: stateMachine.clientData.phone,
+      address: stateMachine.clientData.address,
+      customField: {
+        specialInstructions: input || 'None'
+      }
+    };
+    await createOrUpdateContact(contactData);
+    console.log('collectSpecialInstructions: Contact saved to GHL');
+  } catch (error) {
+    console.error('collectSpecialInstructions: GHL contact save failed', error);
+  }
+
   const accessToken = await getAccessToken();
   const eventDetails = {
     subject: 'Plumbing Appointment',
@@ -243,13 +264,13 @@ async function collectSpecialInstructions(input) {
     return response;
   } else {
     console.error('collectSpecialInstructions: Booking failed');
-    return "Sorry, I couldn’t book the appointment. Please try again later.";
+    return "Sorry, I couldn't book the appointment. Please try again later.";
   }
 }
 
 async function handleGeneralQuery(input) {
   console.log('handleGeneralQuery: Processing', input);
-  const response = await getResponse(input.includes('AI') ? "Yep, I’m an AI assistant for Usher Fix Plumbing! How can I help you?" : input, stateMachine.conversationHistory);
+  const response = await getResponse(input.includes('AI') ? "Yep, I'm an AI assistant for Usher Fix Plumbing! How can I help you?" : input, stateMachine.conversationHistory);
   stateMachine.conversationHistory.push({ role: 'assistant', content: response });
   console.log('handleGeneralQuery: Response', response);
   return response;

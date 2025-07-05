@@ -6,9 +6,9 @@ const { synthesizeBuffer } = require('./tts');
 const fs = require('fs');
 const path = require('path');
 
-const APP_URL = process.env.APP_URL;
 function baseUrl(req) {
-  return APP_URL || `${req.protocol}://${req.get('Host')}`;
+  // Use environment variable or fall back to request URL
+  return process.env.APP_URL || `${req.protocol}://${req.get('Host')}`;
 }
 
 async function handleVoice(req, res) {
@@ -22,7 +22,7 @@ async function handleVoice(req, res) {
     method: 'POST',
   });
   g.play(`${B}/Introduction.mp3`);
-  g.say('Hi, I’m Robyn from Usher Fix Plumbing. How can I help you today?');
+  g.say("Hi, I'm Robyn from Usher Fix Plumbing. How can I help you today?");
   twiml.redirect('/voice');
   res.type('text/xml').send(twiml.toString());
 }
