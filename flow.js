@@ -72,31 +72,46 @@ async function calculateTravelTime(origin, destination) {
 
 async function handleInput(input) {
   console.log('handleInput: Processing', input);
+  
+  // Add input validation
+  if (!input || input.trim().length === 0) {
+    return "I didn't catch that. Could you please repeat what you said?";
+  }
+  
   stateMachine.conversationHistory.push({ role: 'user', content: input });
 
-  switch (stateMachine.currentState) {
-    case 'start':
-      return await handleStart(input);
-    case 'hot water system':
-    case 'toilet':
-    case 'burst/leak':
-    case 'rain-pump':
-    case 'roof leak':
-    case 'new install/quote':
-    case 'other':
-      return await askNextQuestion(input);
-    case 'ask_booking':
-      return await askBooking(input);
-    case 'collect_details':
-      return await collectClientDetails(input);
-    case 'book_appointment':
-      return await handleAppointmentBooking(input);
-    case 'confirm_slot':
-      return await confirmSlot(input);
-    case 'special_instructions':
-      return await collectSpecialInstructions(input);
-    case 'general':
-      return await handleGeneralQuery(input);
+  try {
+    switch (stateMachine.currentState) {
+      case 'start':
+        return await handleStart(input);
+      case 'hot water system':
+      case 'toilet':
+      case 'burst/leak':
+      case 'rain-pump':
+      case 'roof leak':
+      case 'new install/quote':
+      case 'other':
+        return await askNextQuestion(input);
+      case 'ask_booking':
+        return await askBooking(input);
+      case 'collect_details':
+        return await collectClientDetails(input);
+      case 'book_appointment':
+        return await handleAppointmentBooking(input);
+      case 'confirm_slot':
+        return await confirmSlot(input);
+      case 'special_instructions':
+        return await collectSpecialInstructions(input);
+      case 'general':
+        return await handleGeneralQuery(input);
+      default:
+        // Reset to start if in unknown state
+        stateMachine.currentState = 'start';
+        return await handleStart(input);
+    }
+  } catch (error) {
+    console.error('handleInput error:', error);
+    return "I'm sorry, I'm having trouble processing that. Could you please try again?";
   }
 }
 
@@ -276,4 +291,11 @@ async function handleGeneralQuery(input) {
   return response;
 }
 
-module.exports = { handleInput };
+// Add this function to handle conversation timeouts
+async function handleTimeout() {
+  const response = await getResponse("It seems like you're not responding. Is there anything else I can help you with today?", stateMachine.conversationHistory);
+  stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+  return response;
+}
+
+module.exports = { handleInput, stateMachine, handleTimeout };
