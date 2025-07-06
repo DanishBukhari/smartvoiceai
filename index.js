@@ -24,8 +24,11 @@ app.post('/speech', async (req, res, next) => {
     console.error('Speech handler error:', error);
     const twiml = new VoiceResponse();
     
-    // Use static file instead of Twilio TTS
-    twiml.play(`${req.protocol}://${req.get('Host')}/Introduction.mp3`);
+    // Use Twilio TTS instead of intro file to avoid loops
+    twiml.say({
+      voice: 'alice',
+      language: 'en-AU'
+    }, "I'm sorry, I'm having technical difficulties. Please try again.");
     
     const gather = twiml.gather({
       input: 'speech',
@@ -52,7 +55,11 @@ app.use((err, req, res, next) => {
   
   if (!res.headersSent) {
     const twiml = new VoiceResponse();
-    twiml.play(`${req.protocol}://${req.get('Host')}/Introduction.mp3`); // Use static file
+    // Use Twilio TTS instead of intro file to avoid loops
+    twiml.say({
+      voice: 'alice',
+      language: 'en-AU'
+    }, "I'm sorry, there was an error. Please try again.");
     
     twiml.gather({
       input: 'speech',

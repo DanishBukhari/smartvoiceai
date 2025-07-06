@@ -61,10 +61,14 @@ async function handleSpeech(req, res) {
   
   console.log('User said:', userText, 'Confidence:', speechConfidence);
 
-  // Handle low confidence speech - use static file instead of Twilio voice
+  // Handle low confidence speech - don't reset conversation
   if (userText && speechConfidence < 0.3) {
     const twiml = new VoiceResponse();
-    twiml.play(`${B}/Introduction.mp3`); // Use static file instead of Twilio TTS
+    // Use a simple "please repeat" message instead of intro
+    twiml.say({
+      voice: 'alice',
+      language: 'en-AU'
+    }, "I didn't catch that clearly. Could you please repeat?");
     
     twiml.gather({
       input: 'speech',
@@ -86,14 +90,14 @@ async function handleSpeech(req, res) {
     reply = "Sorry, I'm having trouble understanding. Could you please repeat that?";
   }
 
-  // Generate audio with timeout protection for faster response
+  // Generate audio with better timeout protection
   let audioBuffer;
   let filename;
   try {
-    // Add 2-second timeout to TTS generation
+    // Increase timeout to 4 seconds for better reliability
     const ttsPromise = synthesizeBuffer(reply);
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('TTS timeout')), 2000)
+      setTimeout(() => reject(new Error('TTS timeout')), 4000)
     );
     
     audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);
@@ -117,8 +121,11 @@ async function handleSpeech(req, res) {
   if (filename) {
     twiml.play(`${B}/${filename}`);
   } else {
-    // Use a static file instead of Twilio TTS
-    twiml.play(`${B}/Introduction.mp3`);
+    // Use Twilio TTS as fallback instead of intro file to avoid loops
+    twiml.say({
+      voice: 'alice',
+      language: 'en-AU'
+    }, reply);
   }
 
   // Add gather with better timeout handling
