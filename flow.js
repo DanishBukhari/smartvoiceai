@@ -51,6 +51,34 @@ const issueQuestions = {
   ],
 };
 
+// Add conversation learning
+const conversationInsights = {
+  commonIssues: new Map(),
+  customerPreferences: new Map(),
+  successfulPhrases: new Map()
+};
+
+// Add analytics to track bot performance
+const botAnalytics = {
+  totalConversations: 0,
+  successfulBookings: 0,
+  commonIssues: new Map(),
+  averageResponseTime: 0,
+  customerSatisfaction: []
+};
+
+// Track conversation success
+function trackConversationSuccess(successful) {
+  botAnalytics.totalConversations++;
+  if (successful) {
+    botAnalytics.successfulBookings++;
+  }
+  
+  // Calculate success rate
+  const successRate = (botAnalytics.successfulBookings / botAnalytics.totalConversations) * 100;
+  console.log(`Bot Success Rate: ${successRate.toFixed(1)}%`);
+}
+
 async function calculateTravelTime(origin, destination) {
   console.log('calculateTravelTime: Calculating from', origin, 'to', destination);
   try {
@@ -76,6 +104,9 @@ async function handleInput(input) {
   console.log('Current State:', stateMachine.currentState);
   console.log('Question Index:', stateMachine.questionIndex);
   console.log('Client Data:', stateMachine.clientData);
+  
+  // Learn from input
+  await learnFromInput(input);
   
   // Add input validation
   if (!input || input.trim().length === 0) {
@@ -118,9 +149,19 @@ async function handleInput(input) {
         response = await handleGeneralQuery(input);
         break;
       default:
-        console.log('Unknown state, resetting to start');
-        stateMachine.currentState = 'start';
-        response = await handleStart(input);
+        console.log('Unknown state, attempting recovery...');
+        // Try to understand what the customer wants
+        const recoveryResponse = await getResponse(`The customer said: "${input}". 
+        Based on this, what should I ask them? Consider if they're:
+        1. Describing a new issue
+        2. Answering a previous question
+        3. Asking for help
+        4. Ending the conversation
+        
+        Return a natural response that helps continue the conversation.`);
+        
+        stateMachine.currentState = 'general';
+        response = recoveryResponse;
     }
     
     console.log('=== handleInput END ===');
@@ -129,15 +170,78 @@ async function handleInput(input) {
     return response;
   } catch (error) {
     console.error('handleInput error:', error);
-    return "I'm sorry, I'm having trouble processing that. Could you please try again?";
+    
+    // Smart error recovery
+    const recoveryPrompt = `I'm having trouble understanding. The customer said: "${input}". 
+    Provide a helpful response that:
+    1. Acknowledges the difficulty
+    2. Asks for clarification
+    3. Offers to help in a different way`;
+    
+    return await getResponse(recoveryPrompt);
+  }
+}
+
+async function learnFromInput(input) {
+  // Analyze input for patterns
+  const analysis = await getResponse(`Analyze this customer input: "${input}". 
+  Extract:
+  1. Main issue mentioned
+  2. Urgency level
+  3. Customer emotion (frustrated, calm, urgent)
+  4. Technical knowledge level
+  5. Any safety concerns
+  
+  Return as JSON: {"issue": "...", "urgency": "...", "emotion": "...", "knowledge": "...", "safety": "..."}`);
+  
+  try {
+    const insights = JSON.parse(analysis);
+    
+    // Store insights for future improvements
+    if (insights.issue) {
+      const count = conversationInsights.commonIssues.get(insights.issue) || 0;
+      conversationInsights.commonIssues.set(insights.issue, count + 1);
+    }
+    
+    // Adjust response based on customer emotion
+    if (insights.emotion === 'frustrated') {
+      stateMachine.clientData.needsEmpathy = true;
+    }
+    
+    if (insights.safety === 'yes') {
+      stateMachine.clientData.safetyConcern = true;
+    }
+  } catch (error) {
+    console.log('Learning analysis failed:', error);
   }
 }
 
 async function handleStart(input) {
   console.log('handleStart: Identifying issue');
-  const issuePrompt = `Identify the plumbing issue from: toilet, hot water system, burst/leak, rain-pump, roof leak, new install/quote, other. Query: "${input}"`;
-  stateMachine.issueType = (await getResponse(issuePrompt)).toLowerCase();
+  
+  const enhancedPrompt = `Analyze this customer query and identify the primary plumbing issue. Consider context and urgency.
+
+Customer says: "${input}"
+
+Categorize into one of these types:
+- toilet: Any toilet-related issues (blocked, leaking, running, not flushing)
+- hot water system: Hot water problems (no hot water, leaks, age, tank issues)
+- burst/leak: Active leaks, burst pipes, water damage
+- rain-pump: Rainwater pump issues, water supply problems
+- roof leak: Roof leaks, ceiling damage, water ingress
+- new install/quote: New installations, quotes, upgrades
+- other: General questions, unclear issues, or multiple problems
+
+Also assess:
+- Urgency level (emergency, urgent, routine)
+- Safety concerns (water damage, electrical issues)
+- Multiple issues present
+
+Return only the category name (e.g., "toilet", "hot water system").`;
+
+  stateMachine.issueType = (await getResponse(enhancedPrompt)).toLowerCase();
   console.log('handleStart: Issue type', stateMachine.issueType);
+  
   if (issueQuestions[stateMachine.issueType]) {
     stateMachine.currentState = stateMachine.issueType;
     stateMachine.questionIndex = 0;
@@ -150,17 +254,45 @@ async function handleStart(input) {
 
 async function askNextQuestion(input) {
   console.log('askNextQuestion: Current state', stateMachine.currentState, 'Index', stateMachine.questionIndex);
+  
+  // Store customer's response
+  if (input) {
+    stateMachine.clientData[`${stateMachine.currentState}_${stateMachine.questionIndex}`] = input;
+    
+    // Analyze response for urgency or additional issues
+    const urgencyCheck = await getResponse(`Analyze this response for urgency: "${input}". Is this an emergency situation? Return only "yes" or "no".`);
+    if (urgencyCheck.toLowerCase().includes('yes')) {
+      stateMachine.clientData.urgent = true;
+    }
+  }
+  
   const questions = issueQuestions[stateMachine.currentState];
-  if (input) stateMachine.clientData[`${stateMachine.currentState}_${stateMachine.questionIndex}`] = input;
+  
   if (stateMachine.questionIndex < questions.length) {
-    const response = await getResponse(questions[stateMachine.questionIndex], stateMachine.conversationHistory);
+    // Make questions more contextual
+    let contextualQuestion = questions[stateMachine.questionIndex];
+    
+    // Add context from previous answers
+    if (stateMachine.questionIndex > 0) {
+      const previousAnswer = stateMachine.clientData[`${stateMachine.currentState}_${stateMachine.questionIndex - 1}`];
+      contextualQuestion = await getResponse(`Based on the customer's previous answer "${previousAnswer}", rephrase this question to be more specific and helpful: "${contextualQuestion}". Keep it natural and conversational.`);
+    }
+    
+    const response = await getResponse(contextualQuestion, stateMachine.conversationHistory);
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     stateMachine.questionIndex++;
     console.log('askNextQuestion: Response', response);
     return response;
   } else {
+    // Smart booking suggestion based on issue severity
+    let bookingPrompt = "Would you like to book an appointment for this?";
+    
+    if (stateMachine.clientData.urgent) {
+      bookingPrompt = "This sounds urgent. Would you like me to book an emergency appointment for you?";
+    }
+    
     stateMachine.currentState = 'ask_booking';
-    const response = await getResponse("Would you like to book an appointment for this?", stateMachine.conversationHistory);
+    const response = await getResponse(bookingPrompt, stateMachine.conversationHistory);
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     console.log('askNextQuestion: Booking prompt', response);
     return response;
@@ -355,6 +487,25 @@ async function handleTimeout() {
   const response = await getResponse("It seems like you're not responding. Is there anything else I can help you with today?", stateMachine.conversationHistory);
   stateMachine.conversationHistory.push({ role: 'assistant', content: response });
   return response;
+}
+
+// Add emotional intelligence to responses
+async function getEmotionallyAwareResponse(basePrompt, context = {}) {
+  let enhancedPrompt = basePrompt;
+  
+  if (context.needsEmpathy) {
+    enhancedPrompt = `The customer seems frustrated. Respond with empathy and reassurance: ${basePrompt}`;
+  }
+  
+  if (context.safetyConcern) {
+    enhancedPrompt = `This involves safety concerns. Provide clear safety advice first, then: ${basePrompt}`;
+  }
+  
+  if (context.urgent) {
+    enhancedPrompt = `This is urgent. Show appropriate concern and urgency: ${basePrompt}`;
+  }
+  
+  return await getResponse(enhancedPrompt, stateMachine.conversationHistory);
 }
 
 module.exports = { handleInput, stateMachine, handleTimeout };
