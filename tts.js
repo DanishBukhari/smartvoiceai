@@ -39,20 +39,31 @@ const preGeneratedFiles = new Map();
 
 // Pre-generate these phrases when server starts
 async function preloadCommonResponses() {
-  console.log('Pre-generating common responses...');
+  const commonPhrases = [
+    "What's your full name, please?",
+    "Could I have your email address?",
+    "What's your phone number?",
+    "And your full address?",
+    "Would you like to book an appointment?",
+    "I didn't catch that. Could you please repeat?",
+    "Thank you for calling. How can I help you today?"
+  ];
+  
   for (const phrase of commonPhrases) {
     try {
-      await synthesizeBuffer(phrase);
-      console.log(`Pre-generated: ${phrase.substring(0, 30)}...`);
+      const audioBuffer = await synthesizeBuffer(phrase);
+      const filename = `pregen_${phrase.replace(/[^a-zA-Z0-9]/g, '_')}.mp3`;
+      const outPath = path.join(__dirname, 'public', filename);
+      await fs.promises.writeFile(outPath, audioBuffer);
+      console.log(`Pre-generated: ${filename}`);
     } catch (error) {
-      console.log(`Failed to pre-generate: ${phrase.substring(0, 30)}...`);
+      console.error(`Failed to pre-generate: ${phrase}`, error);
     }
   }
-  console.log('Pre-generation complete!');
 }
 
 // Call this when server starts
-// preloadCommonResponses(); // Uncomment this line
+preloadCommonResponses();
 
 async function preloadCoreResponses() {
   console.log('🚀 Starting pre-generation of core responses...');
@@ -139,10 +150,11 @@ async function synthesizeBuffer(text) {
     text,
     model_id: 'eleven_multilingual_v2',
     voice_settings: { 
-      stability: 0.2, // Optimized for speed
+      stability: 0.2, // Lower for faster generation
       similarity_boost: 0.7 
     },
-    optimize_streaming_latency: 6, // Maximum optimization
+    optimize_streaming_latency: 4, // Maximum speed optimization
+    output_format: 'mp3_44100_128', // Faster encoding
   });
 
   const options = {

@@ -73,8 +73,8 @@ async function getResponse(prompt, conversationHistory = []) {
     const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: messages,
-      max_tokens: 200,
-      temperature: 0.7,
+      max_tokens: 150,
+      temperature: 0.5,
     });
     const response = completion.choices[0].message.content.trim();
     
