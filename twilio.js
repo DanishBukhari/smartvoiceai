@@ -104,7 +104,7 @@ async function handleSpeech(req, res) {
     // Match the timeout with tts.js (4 seconds)
     const ttsPromise = synthesizeBuffer(reply);
     const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('TTS timeout')), 4000)
+      setTimeout(() => reject(new Error('TTS timeout')), 2500)
     );
     
     audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);

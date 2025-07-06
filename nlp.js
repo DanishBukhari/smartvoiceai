@@ -5,8 +5,19 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Add caching for NLP responses
+const nlpCache = new Map();
+
 async function getResponse(prompt, conversationHistory = []) {
   console.log('getResponse: Called with prompt', prompt);
+  
+  // Check cache for simple prompts
+  const cacheKey = prompt.toLowerCase().trim();
+  if (nlpCache.has(cacheKey)) {
+    console.log('NLP: Using cached response');
+    return nlpCache.get(cacheKey);
+  }
+  
   try {
     const messages = [
       {
@@ -23,6 +34,14 @@ async function getResponse(prompt, conversationHistory = []) {
       temperature: 0.7,
     });
     const response = completion.choices[0].message.content.trim();
+    
+    // Cache the response
+    nlpCache.set(cacheKey, response);
+    if (nlpCache.size > 100) {
+      const firstKey = nlpCache.keys().next().value;
+      nlpCache.delete(firstKey);
+    }
+    
     console.log('getResponse: Response', response);
     return response;
   } catch (error) {

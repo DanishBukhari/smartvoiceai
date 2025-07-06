@@ -3,9 +3,18 @@ const express = require('express');
 const path = require('path');
 const { handleVoice, handleSpeech } = require('./twilio');
 const { VoiceResponse } = require('twilio').twiml;
+const { preloadCoreResponses } = require('./tts');
 
 const app = express();
 app.enable('trust proxy');
+
+// Start pre-generation when server starts
+console.log('🔄 Starting server and pre-generating responses...');
+preloadCoreResponses().then(() => {
+  console.log('✅ Server ready with pre-generated responses!');
+}).catch(error => {
+  console.error('❌ Pre-generation failed:', error);
+});
 
 // Serve your intro MP3
 app.use(express.static(path.join(__dirname, 'public')));
