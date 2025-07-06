@@ -47,32 +47,153 @@ async function handleVoice(req, res) {
   res.type('text/xml').send(twiml.toString());
 }
 
+const firstResponseCache = new Map();
+
 async function handleSpeech(req, res) {
   const startTime = Date.now();
   console.log('=== Speech Request Started ===');
-  
-  console.log('=== Speech Request ===');
-  console.log('CallSid:', req.body.CallSid);
-  console.log('SpeechResult:', req.body.SpeechResult);
-  console.log('Confidence:', req.body.Confidence);
-  console.log('Current State:', stateMachine.currentState);
-  console.log('=====================');
   
   const B = baseUrl(req);
   const userText = req.body.SpeechResult || '';
   const speechConfidence = parseFloat(req.body.Confidence) || 0;
   
-  console.log('User said:', userText, 'Confidence:', speechConfidence);
+  // Check if this is a first interaction
+  const isFirstInteraction = stateMachine.currentState === 'start';
+  
+  if (isFirstInteraction) {
+    // Check fast-path cache for common first responses
+    const cacheKey = userText.toLowerCase().trim();
+    if (firstResponseCache.has(cacheKey)) {
+      console.log('🚀 Using fast-path cached response');
+      const cachedResponse = firstResponseCache.get(cacheKey);
+      
+      const twiml = new VoiceResponse();
+      twiml.say({
+        voice: 'alice',
+        language: 'en-AU'
+      }, cachedResponse);
+      
+      twiml.gather({
+        input: 'speech',
+        speechTimeout: 'auto',
+        language: 'en-AU',
+        action: `${B}/speech`,
+        method: 'POST',
+        timeout: 10,
+      });
+      
+      console.log(`⏱️ Fast-path response time: ${Date.now() - startTime}ms`);
+      return res.type('text/xml').send(twiml.toString());
+    }
+  }
 
-  // Handle low confidence speech - don't reset conversation
-  if (userText && speechConfidence < 0.3) {
+  // Add timeout protection
+  const requestTimeout = setTimeout(() => {
+    console.error('❌ Request timeout - sending fallback response');
     const twiml = new VoiceResponse();
-    // Use a simple "please repeat" message instead of intro
     twiml.say({
       voice: 'alice',
       language: 'en-AU'
-    }, "I didn't catch that clearly. Could you please repeat?");
+    }, "I'm sorry, I'm taking too long to respond. Please try again.");
     
+    twiml.gather({
+      input: 'speech',
+      speechTimeout: 'auto',
+      language: 'en-AU',
+      action: `${req.protocol}://${req.get('Host')}/speech`,
+      method: 'POST',
+      timeout: 10,
+    });
+    
+    res.type('text/xml').send(twiml.toString());
+  }, 8000); // 8-second timeout
+
+  try {
+    console.log('=== Speech Request ===');
+    console.log('CallSid:', req.body.CallSid);
+    console.log('SpeechResult:', req.body.SpeechResult);
+    console.log('Confidence:', req.body.Confidence);
+    console.log('Current State:', stateMachine.currentState);
+    console.log('=====================');
+    
+    const B = baseUrl(req);
+    const userText = req.body.SpeechResult || '';
+    const speechConfidence = parseFloat(req.body.Confidence) || 0;
+    
+    console.log('User said:', userText, 'Confidence:', speechConfidence);
+
+    // Handle low confidence speech - don't reset conversation
+    if (userText && speechConfidence < 0.3) {
+      const twiml = new VoiceResponse();
+      // Use a simple "please repeat" message instead of intro
+      twiml.say({
+        voice: 'alice',
+        language: 'en-AU'
+      }, "I didn't catch that clearly. Could you please repeat?");
+      
+      twiml.gather({
+        input: 'speech',
+        speechTimeout: 'auto',
+        language: 'en-AU',
+        action: `${B}/speech`,
+        method: 'POST',
+        timeout: 10,
+      });
+      
+      return res.type('text/xml').send(twiml.toString());
+    }
+
+    // Add timing logs
+    const nlpStart = Date.now();
+    let reply;
+    try {
+      reply = await handleInput(userText);
+    } catch (e) {
+      console.error('NL error:', e);
+      reply = "Sorry, I'm having trouble understanding. Could you please repeat that?";
+    }
+    const nlpTime = Date.now() - nlpStart;
+    console.log(`NLP processing time: ${nlpTime}ms`);
+
+    // Generate audio with better timeout protection
+    let audioBuffer;
+    let filename;
+    try {
+      // Match the timeout with tts.js (4 seconds)
+      const ttsPromise = synthesizeBuffer(reply);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('TTS timeout')), 2000)
+      );
+      
+      audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);
+      
+      if (audioBuffer && audioBuffer.length > 0) {
+        const callSid = req.body.CallSid || Date.now().toString();
+        filename = `${callSid}.mp3`;
+        const outPath = path.join(__dirname, 'public', filename);
+        await fs.promises.writeFile(outPath, audioBuffer);
+      } else {
+        throw new Error('Empty audio buffer');
+      }
+    } catch (e) {
+      console.error('TTS error:', e);
+      filename = null;
+    }
+
+    // Create TwiML response
+    const twiml = new VoiceResponse();
+    
+    if (filename) {
+      twiml.play(`${B}/${filename}`);
+    } else {
+      // Use Twilio TTS as fallback - this is the key fix
+      twiml.say({
+        voice: 'alice',
+        language: 'en-AU'
+      }, reply);
+    }
+
+    // Add gather with better timeout handling
     twiml.gather({
       input: 'speech',
       speechTimeout: 'auto',
@@ -81,74 +202,34 @@ async function handleSpeech(req, res) {
       method: 'POST',
       timeout: 10,
     });
-    
-    return res.type('text/xml').send(twiml.toString());
-  }
 
-  // Add timing logs
-  const nlpStart = Date.now();
-  let reply;
-  try {
-    reply = await handleInput(userText);
-  } catch (e) {
-    console.error('NL error:', e);
-    reply = "Sorry, I'm having trouble understanding. Could you please repeat that?";
-  }
-  const nlpTime = Date.now() - nlpStart;
-  console.log(`NLP processing time: ${nlpTime}ms`);
-
-  // Generate audio with better timeout protection
-  let audioBuffer;
-  let filename;
-  try {
-    // Match the timeout with tts.js (4 seconds)
-    const ttsPromise = synthesizeBuffer(reply);
-    const timeoutPromise = new Promise((_, reject) => 
-      setTimeout(() => reject(new Error('TTS timeout')), 2000)
-    );
+    const totalTime = Date.now() - startTime;
+    console.log(`=== Total response time: ${totalTime}ms ===`);
     
-    audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);
+    clearTimeout(requestTimeout); // Clear timeout on success
+    res.type('text/xml').send(twiml.toString());
     
-    if (audioBuffer && audioBuffer.length > 0) {
-      const callSid = req.body.CallSid || Date.now().toString();
-      filename = `${callSid}.mp3`;
-      const outPath = path.join(__dirname, 'public', filename);
-      await fs.promises.writeFile(outPath, audioBuffer);
-    } else {
-      throw new Error('Empty audio buffer');
-    }
-  } catch (e) {
-    console.error('TTS error:', e);
-    filename = null;
-  }
-
-  // Create TwiML response
-  const twiml = new VoiceResponse();
-  
-  if (filename) {
-    twiml.play(`${B}/${filename}`);
-  } else {
-    // Use Twilio TTS as fallback - this is the key fix
+  } catch (error) {
+    clearTimeout(requestTimeout);
+    console.error('❌ Speech handler error:', error);
+    
+    const twiml = new VoiceResponse();
     twiml.say({
       voice: 'alice',
       language: 'en-AU'
-    }, reply);
+    }, "I'm sorry, there was an error. Please try again.");
+    
+    twiml.gather({
+      input: 'speech',
+      speechTimeout: 'auto',
+      language: 'en-AU',
+      action: `${req.protocol}://${req.get('Host')}/speech`,
+      method: 'POST',
+      timeout: 10,
+    });
+    
+    res.type('text/xml').send(twiml.toString());
   }
-
-  // Add gather with better timeout handling
-  twiml.gather({
-    input: 'speech',
-    speechTimeout: 'auto',
-    language: 'en-AU',
-    action: `${B}/speech`,
-    method: 'POST',
-    timeout: 10,
-  });
-
-  const totalTime = Date.now() - startTime;
-  console.log(`=== Total response time: ${totalTime}ms ===`);
-  
-  res.type('text/xml').send(twiml.toString());
 }
 
 async function cleanupAudioFiles() {

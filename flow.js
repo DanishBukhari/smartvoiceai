@@ -219,6 +219,31 @@ async function learnFromInput(input) {
 async function handleStart(input) {
   console.log('handleStart: Identifying issue');
   
+  // Add fast-path for common first responses
+  const commonIssues = {
+    'toilet': "What's happening with your toilet? Blocked, leaking, running, or not flushing?",
+    'hot water': "Do you have any hot water at all?",
+    'water': "Do you have any hot water at all?",
+    'leak': "Has the water been shut off, or is it still running?",
+    'pipe': "Has the water been shut off, or is it still running?",
+    'pump': "Is the pump standalone or submersible?",
+    'roof': "Is water dripping inside right now?",
+    'quote': "What would you like us to quote—new installation, repair, or inspection?"
+  };
+  
+  // Quick check for common keywords
+  const lowerInput = input.toLowerCase();
+  for (const [keyword, response] of Object.entries(commonIssues)) {
+    if (lowerInput.includes(keyword)) {
+      console.log(`Fast-path response for: ${keyword}`);
+      stateMachine.issueType = keyword;
+      stateMachine.currentState = keyword;
+      stateMachine.questionIndex = 0;
+      return response; // Return pre-written response instantly
+    }
+  }
+  
+  // Fall back to AI processing for complex cases
   const enhancedPrompt = `Analyze this customer query and identify the primary plumbing issue. Consider context and urgency.
 
 Customer says: "${input}"

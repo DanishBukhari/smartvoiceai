@@ -31,7 +31,24 @@ const preGeneratedPhrases = [
   "Is it gas, electric, or solar?",
   "What's happening with your toilet?",
   "Is it still leaking or has it stopped?",
-  "How many toilets or showers do you have?"
+  "How many toilets or showers do you have?",
+  "What's happening with your toilet? Blocked, leaking, running, or not flushing?",
+  "Do you have any hot water at all?",
+  "Is it gas, electric, or solar?",
+  "Has the water been shut off, or is it still running?",
+  "Is the pump standalone or submersible?",
+  "Is water dripping inside right now?",
+  "What would you like us to quote—new installation, repair, or inspection?",
+  "Can you describe the issue or what you need?",
+  "Is it still leaking or has it stopped?",
+  "How many toilets or showers do you have?",
+  "Any leaks—steady drip or fast?",
+  "How old is it—under 10 years or over?",
+  "What's the tank size—125L, 250L, 315L, or other?",
+  "Is there flooding inside or outside?",
+  "Does it supply toilets, laundry, or garden?",
+  "Are those fixtures still getting water?",
+  "Is the ceiling bulging or sagging?"
 ];
 
 // Pre-generated audio files mapping
@@ -65,9 +82,41 @@ async function preloadCommonResponses() {
 // Call this when server starts
 preloadCommonResponses();
 
-async function preloadCoreResponses() {
-  console.log('🚀 Starting pre-generation of core responses...');
+// Add this function to pre-populate fast responses
+async function preloadFastPathResponses() {
+  const fastResponses = {
+    'toilet': "What's happening with your toilet? Blocked, leaking, running, or not flushing?",
+    'hot water': "Do you have any hot water at all?",
+    'water': "Do you have any hot water at all?",
+    'leak': "Has the water been shut off, or is it still running?",
+    'pipe': "Has the water been shut off, or is it still running?",
+    'pump': "Is the pump standalone or submersible?",
+    'roof': "Is water dripping inside right now?",
+    'quote': "What would you like us to quote—new installation, repair, or inspection?"
+  };
   
+  // Pre-generate audio for these responses
+  for (const [keyword, response] of Object.entries(fastResponses)) {
+    try {
+      const audioBuffer = await synthesizeBuffer(response);
+      const fileName = `fast_${keyword}.mp3`;
+      const filePath = path.join(__dirname, 'public', fileName);
+      await fs.promises.writeFile(filePath, audioBuffer);
+      console.log(`✅ Pre-generated fast response: ${fileName}`);
+    } catch (error) {
+      console.error(`❌ Failed to pre-generate: ${keyword}`, error);
+    }
+  }
+}
+
+// Call this in your preloadCoreResponses function
+async function preloadCoreResponses() {
+  console.log('🚀 Starting pre-generation...');
+  
+  // Pre-generate fast responses first
+  await preloadFastPathResponses();
+  
+  // Then pre-generate other responses
   for (const phrase of preGeneratedPhrases) {
     try {
       console.log(`Generating: ${phrase.substring(0, 30)}...`);
@@ -145,18 +194,19 @@ async function synthesizeBuffer(text) {
     return responseCache.get(cacheKey);
   }
 
-  const voiceId = 'LXy8KWda5yk1Vw6sEV6w';
+  // Optimize ElevenLabs settings for speed
   const postData = JSON.stringify({
     text,
     model_id: 'eleven_multilingual_v2',
     voice_settings: { 
-      stability: 0.2, // Lower for faster generation
-      similarity_boost: 0.7 
+      stability: 0.1, // Very low for maximum speed
+      similarity_boost: 0.6 
     },
-    optimize_streaming_latency: 4, // Maximum speed optimization
+    optimize_streaming_latency: 6, // Maximum optimization
     output_format: 'mp3_44100_128', // Faster encoding
   });
 
+  const voiceId = 'LXy8KWda5yk1Vw6sEV6w';
   const options = {
     hostname: 'api.elevenlabs.io',
     path: `/v1/text-to-speech/${voiceId}/stream`,
