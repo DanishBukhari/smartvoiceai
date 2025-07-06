@@ -48,6 +48,9 @@ async function handleVoice(req, res) {
 }
 
 async function handleSpeech(req, res) {
+  const startTime = Date.now();
+  console.log('=== Speech Request Started ===');
+  
   console.log('=== Speech Request ===');
   console.log('CallSid:', req.body.CallSid);
   console.log('SpeechResult:', req.body.SpeechResult);
@@ -82,6 +85,8 @@ async function handleSpeech(req, res) {
     return res.type('text/xml').send(twiml.toString());
   }
 
+  // Add timing logs
+  const nlpStart = Date.now();
   let reply;
   try {
     reply = await handleInput(userText);
@@ -89,12 +94,14 @@ async function handleSpeech(req, res) {
     console.error('NL error:', e);
     reply = "Sorry, I'm having trouble understanding. Could you please repeat that?";
   }
+  const nlpTime = Date.now() - nlpStart;
+  console.log(`NLP processing time: ${nlpTime}ms`);
 
   // Generate audio with better timeout protection
   let audioBuffer;
   let filename;
   try {
-    // Increase timeout to 4 seconds for better reliability
+    // Match the timeout with tts.js (4 seconds)
     const ttsPromise = synthesizeBuffer(reply);
     const timeoutPromise = new Promise((_, reject) => 
       setTimeout(() => reject(new Error('TTS timeout')), 4000)
@@ -121,7 +128,7 @@ async function handleSpeech(req, res) {
   if (filename) {
     twiml.play(`${B}/${filename}`);
   } else {
-    // Use Twilio TTS as fallback instead of intro file to avoid loops
+    // Use Twilio TTS as fallback - this is the key fix
     twiml.say({
       voice: 'alice',
       language: 'en-AU'
@@ -138,6 +145,9 @@ async function handleSpeech(req, res) {
     timeout: 10,
   });
 
+  const totalTime = Date.now() - startTime;
+  console.log(`=== Total response time: ${totalTime}ms ===`);
+  
   res.type('text/xml').send(twiml.toString());
 }
 

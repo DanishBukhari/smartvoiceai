@@ -34,8 +34,8 @@ async function synthesizeBuffer(text) {
       'Accept': 'audio/mpeg',
       'Content-Length': Buffer.byteLength(postData),
     },
-    // Add timeout
-    timeout: 3000, // Reduced timeout for faster fallback
+    // Match the timeout with twilio.js
+    timeout: 4000, // Match the 4-second timeout
   };
 
   return new Promise((resolve, reject) => {
