@@ -71,7 +71,11 @@ async function calculateTravelTime(origin, destination) {
 }
 
 async function handleInput(input) {
-  console.log('handleInput: Processing', input);
+  console.log('=== handleInput START ===');
+  console.log('Input:', input);
+  console.log('Current State:', stateMachine.currentState);
+  console.log('Question Index:', stateMachine.questionIndex);
+  console.log('Client Data:', stateMachine.clientData);
   
   // Add input validation
   if (!input || input.trim().length === 0) {
@@ -81,9 +85,11 @@ async function handleInput(input) {
   stateMachine.conversationHistory.push({ role: 'user', content: input });
 
   try {
+    let response;
     switch (stateMachine.currentState) {
       case 'start':
-        return await handleStart(input);
+        response = await handleStart(input);
+        break;
       case 'hot water system':
       case 'toilet':
       case 'burst/leak':
@@ -91,24 +97,36 @@ async function handleInput(input) {
       case 'roof leak':
       case 'new install/quote':
       case 'other':
-        return await askNextQuestion(input);
+        response = await askNextQuestion(input);
+        break;
       case 'ask_booking':
-        return await askBooking(input);
+        response = await askBooking(input);
+        break;
       case 'collect_details':
-        return await collectClientDetails(input);
+        response = await collectClientDetails(input);
+        break;
       case 'book_appointment':
-        return await handleAppointmentBooking(input);
+        response = await handleAppointmentBooking(input);
+        break;
       case 'confirm_slot':
-        return await confirmSlot(input);
+        response = await confirmSlot(input);
+        break;
       case 'special_instructions':
-        return await collectSpecialInstructions(input);
+        response = await collectSpecialInstructions(input);
+        break;
       case 'general':
-        return await handleGeneralQuery(input);
+        response = await handleGeneralQuery(input);
+        break;
       default:
-        // Reset to start if in unknown state
+        console.log('Unknown state, resetting to start');
         stateMachine.currentState = 'start';
-        return await handleStart(input);
+        response = await handleStart(input);
     }
+    
+    console.log('=== handleInput END ===');
+    console.log('Response:', response);
+    console.log('New State:', stateMachine.currentState);
+    return response;
   } catch (error) {
     console.error('handleInput error:', error);
     return "I'm sorry, I'm having trouble processing that. Could you please try again?";

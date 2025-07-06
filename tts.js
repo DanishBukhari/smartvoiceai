@@ -60,7 +60,43 @@ async function preloadCoreResponses() {
   for (const phrase of preGeneratedPhrases) {
     try {
       console.log(`Generating: ${phrase.substring(0, 30)}...`);
-      const audioBuffer = await synthesizeBuffer(phrase);
+      
+      // Generate audio directly without calling synthesizeBuffer to avoid recursion
+      const voiceId = 'LXy8KWda5yk1Vw6sEV6w';
+      const postData = JSON.stringify({
+        text: phrase,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: { 
+          stability: 0.2,
+          similarity_boost: 0.7 
+        },
+        optimize_streaming_latency: 6,
+      });
+
+      const options = {
+        hostname: 'api.elevenlabs.io',
+        path: `/v1/text-to-speech/${voiceId}/stream`,
+        method: 'POST',
+        headers: {
+          'xi-api-key': process.env.ELEVENLABS_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+        timeout: 2500,
+      };
+
+      const audioBuffer = await new Promise((resolve, reject) => {
+        const chunks = [];
+        const req = https.request(options, (res) => {
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+        req.on('error', reject);
+        req.on('timeout', () => reject(new Error('TTS timeout')));
+        req.write(postData);
+        req.end();
+      });
       
       // Save to file with a simple name
       const fileName = `pregen_${phrase.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 20)}.mp3`;
