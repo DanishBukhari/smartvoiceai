@@ -23,10 +23,9 @@ app.post('/speech', async (req, res, next) => {
   } catch (error) {
     console.error('Speech handler error:', error);
     const twiml = new VoiceResponse();
-    twiml.say({
-      voice: 'alice',
-      language: 'en-AU'
-    }, "I'm sorry, I'm having technical difficulties. Please try again.");
+    
+    // Use static file instead of Twilio TTS
+    twiml.play(`${req.protocol}://${req.get('Host')}/Introduction.mp3`);
     
     const gather = twiml.gather({
       input: 'speech',
@@ -37,7 +36,6 @@ app.post('/speech', async (req, res, next) => {
       timeout: 10,
     });
     
-    twiml.redirect('/voice');
     res.type('text/xml').send(twiml.toString());
   }
 });
@@ -72,3 +70,4 @@ app.use((err, req, res, next) => {
 app.listen(process.env.PORT || 3000, () =>
   console.log(`Listening on ${process.env.PORT || 3000}`)
 );
+

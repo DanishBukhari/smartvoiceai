@@ -193,9 +193,20 @@ async function handleAppointmentBooking(input) {
     return "Sorry, I can't access the calendar right now. Please try again later.";
   }
 
-  const minStartDate = new Date('2025-05-28T07:00:00Z');
-  const maxEndDate = new Date('2025-05-28T19:00:00Z');
-  let earliestStartTime = new Date(Math.max(new Date(), minStartDate));
+  // Use dynamic dates instead of hardcoded May 28
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const minStartDate = new Date(today.getTime() + 7 * 60 * 60 * 1000); // 7 AM today
+  const maxEndDate = new Date(today.getTime() + 19 * 60 * 60 * 1000); // 7 PM today
+  
+  // If it's past 7 PM, start from tomorrow
+  if (now.getHours() >= 19) {
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    minStartDate.setTime(tomorrow.getTime() + 7 * 60 * 60 * 1000);
+    maxEndDate.setTime(tomorrow.getTime() + 19 * 60 * 60 * 1000);
+  }
+  
+  let earliestStartTime = new Date(Math.max(now.getTime(), minStartDate.getTime()));
 
   const lastAppointment = await getLastAppointment(accessToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
   if (lastAppointment) {
@@ -214,7 +225,15 @@ async function handleAppointmentBooking(input) {
   }
 
   stateMachine.nextSlot = nextSlot;
-  const formattedSlot = nextSlot.toLocaleString('en-US', { timeZone: 'UTC', hour: 'numeric', minute: 'numeric', hour12: true });
+  const formattedSlot = nextSlot.toLocaleString('en-US', { 
+    timeZone: 'UTC', 
+    hour: 'numeric', 
+    minute: 'numeric', 
+    hour12: true,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric'
+  });
   const response = await getResponse(`The next available slot is ${formattedSlot} UTC. Does that work for you?`, stateMachine.conversationHistory);
   stateMachine.conversationHistory.push({ role: 'assistant', content: response });
   stateMachine.currentState = 'confirm_slot';
@@ -243,7 +262,7 @@ async function collectSpecialInstructions(input) {
   console.log('collectSpecialInstructions: User input', input);
   stateMachine.clientData.specialInstructions = input;
 
-  // Save contact to GHL
+  // Save contact to GHL with better error handling
   try {
     const contactData = {
       firstName: stateMachine.clientData.name?.split(' ')[0] || '',
@@ -259,27 +278,49 @@ async function collectSpecialInstructions(input) {
     console.log('collectSpecialInstructions: Contact saved to GHL');
   } catch (error) {
     console.error('collectSpecialInstructions: GHL contact save failed', error);
+    // Don't fail the entire booking if GHL fails
   }
 
-  const accessToken = await getAccessToken();
-  const eventDetails = {
-    subject: 'Plumbing Appointment',
-    start: { dateTime: stateMachine.nextSlot.toISOString(), timeZone: 'UTC' },
-    end: { dateTime: new Date(stateMachine.nextSlot.getTime() + 60 * 60 * 1000).toISOString(), timeZone: 'UTC' },
-    location: { displayName: stateMachine.clientData.address },
-    body: { content: `Special Instructions: ${input || 'None'}`, contentType: 'text' },
-  };
-  const appointment = await createAppointment(accessToken, eventDetails);
-  if (appointment) {
-    const formattedTime = stateMachine.nextSlot.toLocaleString('en-US', { timeZone: 'UTC' });
-    const response = await getResponse(`All set, ${stateMachine.clientData.name}! Your appointment is booked for ${formattedTime} UTC. Anything else I can help with?`, stateMachine.conversationHistory);
+  // Book appointment with better error handling
+  try {
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      throw new Error('No access token available');
+    }
+    
+    const eventDetails = {
+      subject: 'Plumbing Appointment',
+      start: { dateTime: stateMachine.nextSlot.toISOString(), timeZone: 'UTC' },
+      end: { dateTime: new Date(stateMachine.nextSlot.getTime() + 60 * 60 * 1000).toISOString(), timeZone: 'UTC' },
+      location: { displayName: stateMachine.clientData.address },
+      body: { content: `Special Instructions: ${input || 'None'}`, contentType: 'text' },
+    };
+    
+    const appointment = await createAppointment(accessToken, eventDetails);
+    if (appointment) {
+      const formattedTime = stateMachine.nextSlot.toLocaleString('en-US', { 
+        timeZone: 'UTC',
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: 'numeric',
+        hour12: true
+      });
+      const response = await getResponse(`All set, ${stateMachine.clientData.name}! Your appointment is booked for ${formattedTime} UTC. Anything else I can help with?`, stateMachine.conversationHistory);
+      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+      stateMachine.currentState = 'general';
+      console.log('collectSpecialInstructions: Appointment booked', formattedTime);
+      return response;
+    } else {
+      throw new Error('Appointment creation returned null');
+    }
+  } catch (error) {
+    console.error('collectSpecialInstructions: Booking failed', error);
+    const response = await getResponse("I'm sorry, I couldn't book the appointment due to a technical issue. Please try calling back later or contact us directly.", stateMachine.conversationHistory);
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     stateMachine.currentState = 'general';
-    console.log('collectSpecialInstructions: Appointment booked', formattedTime);
     return response;
-  } else {
-    console.error('collectSpecialInstructions: Booking failed');
-    return "Sorry, I couldn't book the appointment. Please try again later.";
   }
 }
 

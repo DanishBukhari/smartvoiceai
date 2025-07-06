@@ -86,11 +86,18 @@ async function handleSpeech(req, res) {
     reply = "Sorry, I'm having trouble understanding. Could you please repeat that?";
   }
 
-  // Generate audio with better error handling
+  // Generate audio with timeout protection for faster response
   let audioBuffer;
   let filename;
   try {
-    audioBuffer = await synthesizeBuffer(reply);
+    // Add 2-second timeout to TTS generation
+    const ttsPromise = synthesizeBuffer(reply);
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('TTS timeout')), 2000)
+    );
+    
+    audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);
+    
     if (audioBuffer && audioBuffer.length > 0) {
       const callSid = req.body.CallSid || Date.now().toString();
       filename = `${callSid}.mp3`;
