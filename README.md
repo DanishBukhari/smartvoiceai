@@ -67,20 +67,38 @@ heroku config:set OPENAI_API_KEY="your-openai-key"
 heroku config:set ELEVENLABS_API_KEY="your-elevenlabs-key"
 heroku config:set TWILIO_ACCOUNT_SID="your-twilio-sid"
 heroku config:set TWILIO_AUTH_TOKEN="your-twilio-token"
-heroku config:set MICROSOFT_CLIENT_ID="your-ms-client-id"
-heroku config:set MICROSOFT_CLIENT_SECRET="your-ms-client-secret"
-heroku config:set MICROSOFT_TENANT_ID="your-ms-tenant-id"
+heroku config:set OUTLOOK_CLIENT_ID="your-ms-client-id"
+heroku config:set OUTLOOK_CLIENT_SECRET="your-ms-client-secret"
+heroku config:set OUTLOOK_TENANT_ID="your-ms-tenant-id"
+heroku config:set USER_EMAIL="your-user@domain.com"
 heroku config:set GHL_API_KEY="your-ghl-key"
 heroku config:set GHL_LOCATION_ID="your-ghl-location-id"
 heroku config:set APP_URL="https://your-app.herokuapp.com"
 ```
 
-3. **Deploy**
+3. **Pre-generate MP3 files for fast responses**
+```bash
+node pregen-audio.js
+```
+- This will create 70+ MP3 files in the `public/` directory for instant playback of common phrases.
+- Make sure you have enough ElevenLabs credits before running this command.
+
+4. **Push MP3 files to GitHub**
+- Ensure your `.gitignore` does **not** exclude `public/` or `*.mp3` files.
+- Add and commit the MP3 files:
+```bash
+git add public/*.mp3
+git commit -m "Add pre-generated MP3 files for fast TTS"
+git push
+```
+- When you deploy to Heroku, these files will be available for instant use.
+
+5. **Deploy**
 ```bash
 git push heroku main
 ```
 
-4. **Configure Twilio**
+6. **Configure Twilio**
    - Set webhook URL in Twilio console to your Heroku app URL
    - Configure voice webhook to point to `/voice` endpoint
 
@@ -104,9 +122,10 @@ TWILIO_ACCOUNT_SID=your-twilio-sid
 TWILIO_AUTH_TOKEN=your-twilio-token
 
 # Microsoft Outlook
-MICROSOFT_CLIENT_ID=your-ms-client-id
-MICROSOFT_CLIENT_SECRET=your-ms-client-secret
-MICROSOFT_TENANT_ID=your-ms-tenant-id
+OUTLOOK_CLIENT_ID=your-ms-client-id
+OUTLOOK_CLIENT_SECRET=your-ms-client-secret
+OUTLOOK_TENANT_ID=your-ms-tenant-id
+USER_EMAIL=your-user@domain.com
 
 # GoHighLevel CRM
 GHL_API_KEY=your-ghl-key
@@ -180,6 +199,19 @@ heroku logs --num 100
 - 🎤 **Voice quality improvements** with ElevenLabs optimization
 - 🎯 **Call reliability** with better error recovery
 - 🎯 **Conversation loop prevention** with improved logic
+
+## 📝 Troubleshooting
+
+### MP3 Files Not Showing Up in GitHub
+- Check your `.gitignore` file. Remove or comment out any lines that exclude `public/` or `*.mp3`.
+- Use `git add -f public/*.mp3` to force add if needed.
+- Commit and push again.
+
+### Outlook API Issues
+- Ensure you have set `OUTLOOK_CLIENT_ID`, `OUTLOOK_CLIENT_SECRET`, `OUTLOOK_TENANT_ID`, and `USER_EMAIL` in your environment.
+- Grant **admin consent** for `Calendars.ReadWrite` permissions in Azure.
+- Make sure the user email is a real mailbox in your tenant.
+- Use `node test-outlook.js` to verify API access and permissions.
 
 ## 📝 License
 
