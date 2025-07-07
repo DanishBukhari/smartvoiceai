@@ -185,17 +185,25 @@ async function handleInput(input) {
 async function learnFromInput(input) {
   // Analyze input for patterns
   const analysis = await getResponse(`Analyze this customer input: "${input}". 
-  Extract:
-  1. Main issue mentioned
-  2. Urgency level
-  3. Customer emotion (frustrated, calm, urgent)
-  4. Technical knowledge level
-  5. Any safety concerns
+  Extract and return ONLY a valid JSON object with these fields:
+  - issue: main issue mentioned
+  - urgency: urgency level (low/medium/high)
+  - emotion: customer emotion (frustrated/calm/urgent)
+  - knowledge: technical knowledge level (basic/intermediate/advanced)
+  - safety: safety concerns (yes/no/none)
   
-  Return as JSON: {"issue": "...", "urgency": "...", "emotion": "...", "knowledge": "...", "safety": "..."}`);
+  Return ONLY the JSON object, no markdown formatting or additional text.`);
   
   try {
-    const insights = JSON.parse(analysis);
+    // Clean the response to extract just the JSON
+    let jsonStr = analysis.trim();
+    if (jsonStr.includes('```json')) {
+      jsonStr = jsonStr.split('```json')[1].split('```')[0].trim();
+    } else if (jsonStr.includes('```')) {
+      jsonStr = jsonStr.split('```')[1].split('```')[0].trim();
+    }
+    
+    const insights = JSON.parse(jsonStr);
     
     // Store insights for future improvements
     if (insights.issue) {
@@ -213,6 +221,7 @@ async function learnFromInput(input) {
     }
   } catch (error) {
     console.log('Learning analysis failed:', error);
+    // Don't let this break the conversation flow
   }
 }
 
@@ -237,7 +246,12 @@ async function handleStart(input) {
     if (lowerInput.includes(keyword)) {
       console.log(`Fast-path response for: ${keyword}`);
       stateMachine.issueType = keyword;
-      stateMachine.currentState = keyword;
+      // Map keywords to proper state names
+      let stateName = keyword;
+      if (keyword === 'hot water' || keyword === 'water') {
+        stateName = 'hot water system';
+      }
+      stateMachine.currentState = stateName;
       stateMachine.questionIndex = 0;
       return response; // Return pre-written response instantly
     }
@@ -326,7 +340,20 @@ async function askNextQuestion(input) {
 
 async function askBooking(input) {
   console.log('askBooking: User response', input);
-  if (input.toLowerCase().includes('yes')) {
+  
+  // Check if user wants to book (says yes or provides their name)
+  if (input.toLowerCase().includes('yes') || 
+      input.toLowerCase().includes('book') || 
+      input.toLowerCase().includes('appointment') ||
+      // Check if input looks like a name (contains letters and possibly spaces)
+      /^[a-zA-Z\s]+$/.test(input.trim())) {
+    
+    // If they provided a name directly, store it
+    if (/^[a-zA-Z\s]+$/.test(input.trim()) && !input.toLowerCase().includes('yes')) {
+      stateMachine.clientData.name = input.trim();
+      console.log('askBooking: Stored name directly:', input.trim());
+    }
+    
     stateMachine.currentState = 'collect_details';
     return await collectClientDetails('');
   } else {

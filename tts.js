@@ -6,49 +6,108 @@ const fs = require('fs');
 // Add simple caching
 const responseCache = new Map();
 
-// Pre-generate common responses on startup
-const commonPhrases = [
-  "What's your full name, please?",
-  "Could I have your email address?",
-  "What's your phone number?",
-  "And your full address?",
-  "Do you have any hot water at all?",
-  "Is it gas, electric, or solar?",
-  "What's happening with your toilet?",
-  "Would you like to book an appointment for this?"
-];
-
-// Add this to your existing tts.js file
+// Enhanced pre-generation with many more common phrases
 const preGeneratedPhrases = [
+  // Core booking phrases
   "What's your full name, please?",
   "Could I have your email address?",
   "What's your phone number?",
   "And your full address?",
-  "Would you like to book an appointment for this?",
-  "Great! Any special instructions?",
-  "All set! Your appointment is booked.",
+  "Would you like to book an appointment?",
+  "I didn't catch that. Could you please repeat?",
+  "Thank you for calling. How can I help you today?",
+  
+  // Diagnostic questions
   "Do you have any hot water at all?",
   "Is it gas, electric, or solar?",
-  "What's happening with your toilet?",
-  "Is it still leaking or has it stopped?",
-  "How many toilets or showers do you have?",
-  "What's happening with your toilet? Blocked, leaking, running, or not flushing?",
-  "Do you have any hot water at all?",
-  "Is it gas, electric, or solar?",
-  "Has the water been shut off, or is it still running?",
+  "Any leaks—steady drip or fast?",
+  "How old is it—under 10 years or over?",
+  "What size tank do you have?",
+  "Is the water shut off or still running?",
   "Is the pump standalone or submersible?",
   "Is water dripping inside right now?",
   "What would you like us to quote—new installation, repair, or inspection?",
-  "Can you describe the issue or what you need?",
-  "Is it still leaking or has it stopped?",
-  "How many toilets or showers do you have?",
-  "Any leaks—steady drip or fast?",
-  "How old is it—under 10 years or over?",
-  "What's the tank size—125L, 250L, 315L, or other?",
-  "Is there flooding inside or outside?",
-  "Does it supply toilets, laundry, or garden?",
-  "Are those fixtures still getting water?",
-  "Is the ceiling bulging or sagging?"
+  
+  // Booking flow phrases
+  "When would you like your appointment?",
+  "Does that work for you?",
+  "Great! Any special instructions?",
+  "Perfect! Your appointment is booked.",
+  "What time works best for you?",
+  "Morning or afternoon?",
+  "I have a slot available at",
+  "Would that time work for you?",
+  "Excellent! I'll book you in for",
+  "Your appointment is confirmed for",
+  
+  // Confirmation phrases
+  "Thank you for booking with us.",
+  "We'll see you then.",
+  "Is there anything else I can help you with?",
+  "Have a great day!",
+  "Goodbye!",
+  
+  // Error handling
+  "I'm sorry, I didn't understand that.",
+  "Could you please speak more clearly?",
+  "Let me try that again.",
+  "One moment please.",
+  "I'm having trouble understanding.",
+  
+  // Issue identification
+  "What's happening with your toilet? Blocked, leaking, running, or not flushing?",
+  "Has the water been shut off, or is it still running?",
+  "Is the pump standalone or submersible?",
+  "Is water dripping inside right now?",
+  
+  // Time preferences
+  "Would you prefer morning or afternoon?",
+  "What time works best for you?",
+  "I have availability in the morning.",
+  "I have availability in the afternoon.",
+  "Let me check our available slots.",
+  
+  // Special instructions
+  "Any special instructions for our technician?",
+  "Is there anything specific we should know?",
+  "Do you have any pets we should be aware of?",
+  "Is there a gate code or special access?",
+  
+  // Pricing and quotes
+  "I can provide you with a quote for that.",
+  "The cost will depend on the specific issue.",
+  "Would you like a quote for the repair?",
+  "I'll need to assess the situation first.",
+  
+  // Emergency phrases
+  "Is this an emergency?",
+  "Is water currently flooding?",
+  "Do you need immediate assistance?",
+  "I can prioritize this for you.",
+  
+  // Follow-up phrases
+  "We'll call you to confirm.",
+  "You'll receive a confirmation text.",
+  "Our technician will call when on the way.",
+  "Is this the best number to reach you?",
+  
+  // Service types
+  "Are you looking for repair or replacement?",
+  "Is this for residential or commercial?",
+  "Do you need installation or just repair?",
+  "Is this a new installation?",
+  
+  // Location phrases
+  "What suburb are you located in?",
+  "Is this a house or apartment?",
+  "Do you have easy access to the area?",
+  "Is there parking available?",
+  
+  // Payment phrases
+  "We accept cash, card, or bank transfer.",
+  "Payment is due on completion.",
+  "We can provide an invoice.",
+  "Do you have any payment preferences?"
 ];
 
 // Pre-generated audio files mapping
@@ -56,27 +115,84 @@ const preGeneratedFiles = new Map();
 
 // Pre-generate these phrases when server starts
 async function preloadCommonResponses() {
-  const commonPhrases = [
-    "What's your full name, please?",
-    "Could I have your email address?",
-    "What's your phone number?",
-    "And your full address?",
-    "Would you like to book an appointment?",
-    "I didn't catch that. Could you please repeat?",
-    "Thank you for calling. How can I help you today?"
-  ];
+  console.log('🚀 Starting enhanced pre-generation...');
+  console.log(`📝 Will generate ${preGeneratedPhrases.length} audio files`);
   
-  for (const phrase of commonPhrases) {
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (const phrase of preGeneratedPhrases) {
     try {
-      const audioBuffer = await synthesizeBuffer(phrase);
-      const filename = `pregen_${phrase.replace(/[^a-zA-Z0-9]/g, '_')}.mp3`;
-      const outPath = path.join(__dirname, 'public', filename);
-      await fs.promises.writeFile(outPath, audioBuffer);
-      console.log(`Pre-generated: ${filename}`);
+      console.log(`🎵 Generating: ${phrase.substring(0, 40)}...`);
+      
+      // Generate audio directly without calling synthesizeBuffer to avoid recursion
+      const voiceId = 'LXy8KWda5yk1Vw6sEV6w';
+      const postData = JSON.stringify({
+        text: phrase,
+        model_id: 'eleven_multilingual_v2',
+        voice_settings: { 
+          stability: 0.2,
+          similarity_boost: 0.7 
+        },
+        optimize_streaming_latency: 6,
+      });
+
+      const options = {
+        hostname: 'api.elevenlabs.io',
+        path: `/v1/text-to-speech/${voiceId}/stream`,
+        method: 'POST',
+        headers: {
+          'xi-api-key': process.env.ELEVENLABS_API_KEY,
+          'Content-Type': 'application/json',
+          'Accept': 'audio/mpeg',
+          'Content-Length': Buffer.byteLength(postData),
+        },
+        timeout: 5000, // Increased timeout for pre-generation
+      };
+
+      const audioBuffer = await new Promise((resolve, reject) => {
+        const chunks = [];
+        const req = https.request(options, (res) => {
+          res.on('data', (c) => chunks.push(c));
+          res.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+        req.on('error', reject);
+        req.on('timeout', () => reject(new Error('TTS timeout')));
+        req.write(postData);
+        req.end();
+      });
+      
+      // Check if it's actually audio (not an error)
+      const asString = audioBuffer.toString('utf8');
+      if (asString.includes('quota_exceeded') || asString.includes('status') && asString.includes('message')) {
+        console.log(`❌ Quota exceeded, skipping: ${phrase.substring(0, 30)}...`);
+        failCount++;
+        continue;
+      }
+      
+      // Save to file with a simple name
+      const fileName = `pregen_${phrase.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 25)}.mp3`;
+      const filePath = path.join(__dirname, 'public', fileName);
+      await fs.promises.writeFile(filePath, audioBuffer);
+      
+      // Store mapping
+      preGeneratedFiles.set(phrase.toLowerCase().trim(), fileName);
+      successCount++;
+      console.log(`✅ Generated: ${fileName}`);
+      
+      // Small delay to avoid overwhelming the API
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
     } catch (error) {
-      console.error(`Failed to pre-generate: ${phrase}`, error);
+      console.log(`❌ Failed to generate: ${phrase.substring(0, 30)}...`);
+      failCount++;
     }
   }
+  
+  console.log('🎉 Pre-generation complete!');
+  console.log(`✅ Success: ${successCount} files`);
+  console.log(`❌ Failed: ${failCount} files`);
+  console.log('📁 Generated files:', Array.from(preGeneratedFiles.values()));
 }
 
 // Call this when server starts
@@ -226,16 +342,29 @@ async function synthesizeBuffer(text) {
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
         const buffer = Buffer.concat(chunks);
-        responseCache.set(cacheKey, buffer);
-        if (responseCache.size > 100) {
-          const firstKey = responseCache.keys().next().value;
-          responseCache.delete(firstKey);
+        // Check if buffer is actually audio or an error JSON
+        const asString = buffer.toString('utf8');
+        if (asString.includes('quota_exceeded') || asString.includes('status') && asString.includes('message')) {
+          console.error('❌ ElevenLabs quota exceeded or error, using Twilio fallback');
+          resolve(Buffer.from('FALLBACK_TWILIO_TTS'));
+        } else {
+          responseCache.set(cacheKey, buffer);
+          if (responseCache.size > 100) {
+            const firstKey = responseCache.keys().next().value;
+            responseCache.delete(firstKey);
+          }
+          resolve(buffer);
         }
-        resolve(buffer);
       });
     });
-    req.on('error', reject);
-    req.on('timeout', () => reject(new Error('TTS timeout')));
+    req.on('error', (err) => {
+      console.error('❌ ElevenLabs error, using Twilio fallback', err);
+      resolve(Buffer.from('FALLBACK_TWILIO_TTS'));
+    });
+    req.on('timeout', () => {
+      console.error('❌ ElevenLabs timeout, using Twilio fallback');
+      resolve(Buffer.from('FALLBACK_TWILIO_TTS'));
+    });
     req.write(postData);
     req.end();
   });
