@@ -12,9 +12,10 @@ An intelligent voice AI system for plumbing businesses that handles customer cal
 - 👥 **GoHighLevel CRM** - Customer relationship management integration
 - 🚗 **Travel Time Calculation** - Smart scheduling between appointments
 - ⚡ **Performance Optimized** - 2.5-second response times with intelligent caching
-- 🎯 **Pre-generated Responses** - Instant playback for common phrases
+- 🎯 **Pre-generated & Dynamic Responses** - Instant playback for common phrases, and automatic caching of new AI-generated responses
 - 🔄 **State Machine** - Robust conversation flow management
 - 🛡️ **Error Recovery** - Graceful handling of API failures and timeouts
+- 🧠 **Self-Learning Audio Cache** - The bot automatically learns and caches new phrases as MP3s for future use
 
 ## 🏗️ Tech Stack
 
@@ -30,10 +31,11 @@ An intelligent voice AI system for plumbing businesses that handles customer cal
 ## ⚡ Performance Features
 
 ### Speed Optimizations
-- **2.5-second TTS timeout** - Fast fallback to Twilio TTS
+- **2.5-second TTS timeout** - Fast error fallback
 - **Response caching** - Instant repeated phrases
 - **NLP caching** - Faster text processing
 - **Pre-generated audio** - Instant common responses
+- **Dynamic TTS caching** - New AI-generated responses are saved as MP3s and reused automatically
 - **Optimized ElevenLabs settings** - Faster audio generation
 
 ### Reliability Features
@@ -80,8 +82,10 @@ heroku config:set APP_URL="https://your-app.herokuapp.com"
 ```bash
 node pregen-audio.js
 ```
-- This will create 70+ MP3 files in the `public/` directory for instant playback of common phrases.
-- Make sure you have enough ElevenLabs credits before running this command.
+- This will create MP3 files in the `public/` directory for instant playback of core/common phrases.
+- **You do NOT need to pre-generate every possible phrase.**
+- The bot will automatically generate and cache new AI-generated responses as MP3s in `public/` the first time they are needed.
+- Make sure you have enough ElevenLabs credits before running this command for bulk pre-generation.
 
 4. **Push MP3 files to GitHub**
 - Ensure your `.gitignore` does **not** exclude `public/` or `*.mp3` files.
@@ -224,4 +228,14 @@ For technical support or feature requests, please contact the development team.
 ---
 
 **Smart Voice AI** - Transforming plumbing businesses with intelligent voice automation.
+
+## 🧠 Dynamic TTS Caching & Learning
+
+- When the bot generates a new, dynamic reply (not pre-generated), it automatically:
+  1. Calls ElevenLabs to generate the MP3.
+  2. Saves the MP3 in the `public/` directory as `dyn_<hash>.mp3`.
+  3. Uses this file for playback.
+  4. On future requests for the same phrase, the bot reuses the saved MP3 instantly (no new API call).
+- This means you only need to pre-generate core/common phrases. The bot will learn and cache new phrases as users interact with it.
+- All dynamic TTS requests are logged in `tts-dynamic.log` for analysis and quality control.
 

@@ -11,6 +11,11 @@ function baseUrl(req) {
   return process.env.APP_URL || `${req.protocol}://${req.get('Host')}`;
 }
 
+// Add state transition logging
+function logStateTransition(from, to, reason) {
+  console.log(`[STATE] ${from} -> ${to} (${reason})`);
+}
+
 async function handleVoice(req, res) {
   // Reset state for new call
   Object.assign(stateMachine, {
@@ -37,13 +42,18 @@ async function handleVoice(req, res) {
     method: 'POST',
     timeout: 15, // Give more time for initial response
   });
-  
-  // Better fallback - just end the call gracefully
-  twiml.say({
-    voice: 'alice',
-    language: 'en-AU'
-  }, "Thank you for calling. Goodbye.");
-  
+
+  // Goodbye message using ElevenLabs
+  try {
+    const goodbyeBuffer = await synthesizeBuffer("Thank you for calling. Goodbye.");
+    const goodbyeFile = `goodbye_${Date.now()}.mp3`;
+    const goodbyePath = path.join(__dirname, 'public', goodbyeFile);
+    await fs.promises.writeFile(goodbyePath, goodbyeBuffer);
+    twiml.play(`${B}/${goodbyeFile}`);
+  } catch (e) {
+    twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+  }
+
   res.type('text/xml').send(twiml.toString());
 }
 
@@ -77,13 +87,16 @@ async function handleSpeech(req, res) {
     if (firstResponseCache.has(cacheKey)) {
       console.log('🚀 Using fast-path cached response');
       const cachedResponse = firstResponseCache.get(cacheKey);
-      
       const twiml = new VoiceResponse();
-      twiml.say({
-        voice: 'alice',
-        language: 'en-AU'
-      }, cachedResponse);
-      
+      try {
+        const buffer = await synthesizeBuffer(cachedResponse);
+        const file = `fastpath_${Date.now()}.mp3`;
+        const outPath = path.join(__dirname, 'public', file);
+        await fs.promises.writeFile(outPath, buffer);
+        twiml.play(`${B}/${file}`);
+      } catch (e) {
+        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+      }
       twiml.gather({
         input: 'speech',
         speechTimeout: 'auto',
@@ -92,7 +105,6 @@ async function handleSpeech(req, res) {
         method: 'POST',
         timeout: 10,
       });
-      
       console.log(`⏱️ Fast-path response time: ${Date.now() - startTime}ms`);
       return res.type('text/xml').send(twiml.toString());
     }
@@ -100,16 +112,20 @@ async function handleSpeech(req, res) {
 
   // Add timeout protection with proper race condition handling
   let responseSent = false;
-  const requestTimeout = setTimeout(() => {
+  const requestTimeout = setTimeout(async () => {
     if (!responseSent) {
       console.error('❌ Request timeout - sending fallback response');
       responseSent = true;
       const twiml = new VoiceResponse();
-      twiml.say({
-        voice: 'alice',
-        language: 'en-AU'
-      }, "I'm sorry, I'm taking too long to respond. Please try again.");
-      
+      try {
+        const buffer = await synthesizeBuffer("I'm sorry, I'm taking too long to respond. Please try again.");
+        const file = `timeout_${Date.now()}.mp3`;
+        const outPath = path.join(__dirname, 'public', file);
+        await fs.promises.writeFile(outPath, buffer);
+        twiml.play(`${req.protocol}://${req.get('Host')}/${file}`);
+      } catch (e) {
+        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+      }
       twiml.gather({
         input: 'speech',
         speechTimeout: 'auto',
@@ -118,7 +134,6 @@ async function handleSpeech(req, res) {
         method: 'POST',
         timeout: 10,
       });
-      
       res.type('text/xml').send(twiml.toString());
     }
   }, 8000); // 8-second timeout
@@ -138,12 +153,15 @@ async function handleSpeech(req, res) {
       clearTimeout(requestTimeout);
       responseSent = true;
       const twiml = new VoiceResponse();
-      // Use a simple "please repeat" message instead of intro
-      twiml.say({
-        voice: 'alice',
-        language: 'en-AU'
-      }, "I didn't catch that clearly. Could you please repeat?");
-      
+      try {
+        const buffer = await synthesizeBuffer("I didn't catch that clearly. Could you please repeat?");
+        const file = `repeat_${Date.now()}.mp3`;
+        const outPath = path.join(__dirname, 'public', file);
+        await fs.promises.writeFile(outPath, buffer);
+        twiml.play(`${B}/${file}`);
+      } catch (e) {
+        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+      }
       twiml.gather({
         input: 'speech',
         speechTimeout: 'auto',
@@ -250,11 +268,15 @@ async function handleSpeech(req, res) {
     if (!responseSent) {
       responseSent = true;
       const twiml = new VoiceResponse();
-      twiml.say({
-        voice: 'alice',
-        language: 'en-AU'
-      }, "I'm sorry, there was an error. Please try again.");
-      
+      try {
+        const buffer = await synthesizeBuffer("I'm sorry, there was an error. Please try again.");
+        const file = `error_${Date.now()}.mp3`;
+        const outPath = path.join(__dirname, 'public', file);
+        await fs.promises.writeFile(outPath, buffer);
+        twiml.play(`${req.protocol}://${req.get('Host')}/${file}`);
+      } catch (e) {
+        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+      }
       twiml.gather({
         input: 'speech',
         speechTimeout: 'auto',
