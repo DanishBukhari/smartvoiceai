@@ -15,6 +15,7 @@ const stateMachine = {
   issueType: null,
   questionIndex: 0,
   nextSlot: null,
+  bookingRetryCount: 0,
 };
 
 const issueQuestions = {
@@ -483,7 +484,7 @@ async function collectSpecialInstructions(input) {
     // Don't fail the entire booking if GHL fails
   }
 
-  // Book appointment with better error handling
+  // Book appointment with better error handling and retry logic
   try {
     const accessToken = await getAccessToken();
     if (!accessToken) {
@@ -509,6 +510,7 @@ async function collectSpecialInstructions(input) {
         minute: 'numeric',
         hour12: true
       });
+      stateMachine.bookingRetryCount = 0; // Reset on success
       const response = await getResponse(`All set, ${stateMachine.clientData.name}! Your appointment is booked for ${formattedTime} UTC. Anything else I can help with?`, stateMachine.conversationHistory);
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
       stateMachine.currentState = 'general';
@@ -519,10 +521,22 @@ async function collectSpecialInstructions(input) {
     }
   } catch (error) {
     console.error('collectSpecialInstructions: Booking failed', error);
-    const response = await getResponse("I'm sorry, I couldn't book the appointment due to a technical issue. Please try calling back later or contact us directly.", stateMachine.conversationHistory);
-    stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-    stateMachine.currentState = 'general';
-    return response;
+    // Increment retry count
+    stateMachine.bookingRetryCount = (stateMachine.bookingRetryCount || 0) + 1;
+    if (stateMachine.bookingRetryCount < 2) {
+      // Retry booking (optionally, you can add a delay or tweak logic)
+      return await collectSpecialInstructions(input);
+    } else {
+      // Give up and inform the user
+      stateMachine.bookingRetryCount = 0; // Reset for next conversation
+      const response = await getResponse(
+        "I'm sorry, we're having technical difficulties booking your appointment right now. We'll contact you directly to confirm your booking. Is there anything else I can help you with?",
+        stateMachine.conversationHistory
+      );
+      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+      stateMachine.currentState = 'general';
+      return response;
+    }
   }
 }
 
