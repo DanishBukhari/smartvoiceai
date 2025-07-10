@@ -576,7 +576,3 @@ async function getEmotionallyAwareResponse(basePrompt, context = {}) {
 }
 
 module.exports = { handleInput, stateMachine, handleTimeout };
-
-const userText = req.body.SpeechResult || '';
-const speechConfidence = parseFloat(req.body.Confidence) || 0;
-const response = await handleInput(userText, speechConfidence);
