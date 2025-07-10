@@ -99,9 +99,10 @@ async function calculateTravelTime(origin, destination) {
   }
 }
 
-async function handleInput(input) {
+async function handleInput(input, confidence = 1.0) {
   console.log('=== handleInput START ===');
   console.log('Input:', input);
+  console.log('Confidence:', confidence);
   console.log('Current State:', stateMachine.currentState);
   console.log('Question Index:', stateMachine.questionIndex);
   console.log('Client Data:', stateMachine.clientData);
@@ -109,11 +110,14 @@ async function handleInput(input) {
   // Learn from input
   await learnFromInput(input);
   
-  // Add input validation
-  if (!input || input.trim().length === 0) {
+  // Improved input validation
+  if (!input || input.trim().length === 0 || confidence < 0.3) {
+    if (confidence < 0.3) {
+      return "Sorry, I didn't quite catch that. Could you please repeat what you said, or speak a bit more clearly?";
+    }
     return "I didn't catch that. Could you please repeat what you said?";
   }
-  
+
   stateMachine.conversationHistory.push({ role: 'user', content: input });
 
   try {
@@ -572,3 +576,7 @@ async function getEmotionallyAwareResponse(basePrompt, context = {}) {
 }
 
 module.exports = { handleInput, stateMachine, handleTimeout };
+
+const userText = req.body.SpeechResult || '';
+const speechConfidence = parseFloat(req.body.Confidence) || 0;
+const response = await handleInput(userText, speechConfidence);
