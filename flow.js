@@ -529,12 +529,9 @@ async function collectSpecialInstructions(input) {
     } else {
       // Give up and inform the user
       stateMachine.bookingRetryCount = 0; // Reset for next conversation
-      const response = await getResponse(
-        "I'm sorry, we're having technical difficulties booking your appointment right now. We'll contact you directly to confirm your booking. Is there anything else I can help you with?",
-        stateMachine.conversationHistory
-      );
+      const response = "Sorry, there was an error with your booking. The chat will now end.";
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-      stateMachine.currentState = 'general';
+      stateMachine.currentState = 'ended'; // Mark chat as ended
       return response;
     }
   }
