@@ -1,9 +1,10 @@
+// index.js - Modified to remove pre-generation and use Deepgram
+
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const { handleVoice, handleSpeech } = require('./twilio');
 const { VoiceResponse } = require('twilio').twiml;
-const { preloadCoreResponses } = require('./tts');
 const https = require('https');
 
 const app = express();
@@ -53,7 +54,7 @@ app.get('/test', (_, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     environment: {
-      ELEVENLABS_API_KEY: !!process.env.ELEVENLABS_API_KEY,
+      DEEPGRAM_API_KEY: !!process.env.DEEPGRAM_API_KEY,
       OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
       PORT: process.env.PORT || 3000,
       NODE_ENV: process.env.NODE_ENV || 'development'
@@ -89,53 +90,12 @@ app.get('/test-tts', async (req, res) => {
   }
 });
 
-// Health endpoint
+// Health endpoint - Modified for Deepgram (remove ElevenLabs quota check)
 app.get('/health', async (req, res) => {
-  // Check ElevenLabs quota
-  const options = {
-    hostname: 'api.elevenlabs.io',
-    path: '/v1/user',
-    method: 'GET',
-    headers: {
-      'xi-api-key': process.env.ELEVENLABS_API_KEY,
-      'Accept': 'application/json',
-    },
-    timeout: 5000,
-  };
-  const reqTime = Date.now();
-  const apiReq = https.request(options, (apiRes) => {
-    let data = '';
-    apiRes.on('data', (chunk) => data += chunk);
-    apiRes.on('end', () => {
-      try {
-        const json = JSON.parse(data);
-        if (json.subscription && json.subscription.character_limit) {
-          const used = json.subscription.character_count;
-          const limit = json.subscription.character_limit;
-          const pct = (used / limit) * 100;
-          if (pct > 90) {
-            console.warn('⚠️ ElevenLabs quota above 90%');
-          }
-          res.json({
-            status: 'ok',
-            quota: { used, limit, percent: pct },
-            responseTime: Date.now() - reqTime
-          });
-        } else {
-          res.status(500).json({ status: 'error', error: 'No quota info', responseTime: Date.now() - reqTime });
-        }
-      } catch (e) {
-        res.status(500).json({ status: 'error', error: e.message, responseTime: Date.now() - reqTime });
-      }
-    });
+  res.json({
+    status: 'ok',
+    responseTime: 0
   });
-  apiReq.on('error', (err) => {
-    res.status(500).json({ status: 'error', error: err.message, responseTime: Date.now() - reqTime });
-  });
-  apiReq.on('timeout', () => {
-    res.status(500).json({ status: 'error', error: 'timeout', responseTime: Date.now() - reqTime });
-  });
-  apiReq.end();
 });
 
 // Global error handler
@@ -176,18 +136,7 @@ app.use((err, req, res, next) => {
   }
 });
 
-// Start server first, then pre-generate in background
+// Start server
 app.listen(process.env.PORT || 3000, () => {
   console.log(`🚀 Server started on ${process.env.PORT || 3000}`);
-  
-  // Start pre-generation in background (non-blocking)
-  setTimeout(() => {
-    console.log('🔄 Starting pre-generation in background...');
-    preloadCoreResponses().then(() => {
-      console.log('✅ Pre-generation complete!');
-    }).catch(error => {
-      console.error('❌ Pre-generation failed (non-critical):', error);
-    });
-  }, 2000); // Wait 2 seconds after server starts
 });
-
