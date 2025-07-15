@@ -1,4 +1,5 @@
-// twilio.js
+// twilio.js - Full code with dynamic intro/goodbye using Deepgram, removed Introduction.mp3
+
 const twilio = require('twilio');
 const { VoiceResponse } = twilio.twiml;
 const { handleInput, stateMachine } = require('./flow');
@@ -251,7 +252,6 @@ async function handleSpeech(req, res) {
       twiml.play(`${B}/${filename}`);
     } else {
       console.log('🔤 Using Twilio TTS fallback');
-      // Use Twilio TTS as fallback
       twiml.say({
         voice: 'alice',
         language: 'en-AU'

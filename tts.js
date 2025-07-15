@@ -1,4 +1,4 @@
-// tts.js - Corrected to use Deepgram TTS without stream iterator issue
+// tts.js - Fixed stream reading with events
 
 const { DeepgramClient } = require('@deepgram/sdk');
 const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY);
@@ -7,19 +7,19 @@ async function synthesizeBuffer(text) {
   try {
     const response = await deepgram.speak.request(
       { text },
-      { model: 'aura-2-andromeda-en' }  // Adjust model as needed
+      { model: 'aura-asteria-en' }  // Correct model name
     );
     const stream = response.getStream();
     if (!stream) {
       throw new Error('No stream returned from Deepgram');
     }
     
-    const buffers = [];
-    for await (const chunk of stream) {
-      buffers.push(chunk);
-    }
-    
-    return Buffer.concat(buffers);
+    return new Promise((resolve, reject) => {
+      const buffers = [];
+      stream.on('data', (chunk) => buffers.push(chunk));
+      stream.on('end', () => resolve(Buffer.concat(buffers)));
+      stream.on('error', reject);
+    });
   } catch (error) {
     console.error('Deepgram TTS error:', error);
     throw error;
