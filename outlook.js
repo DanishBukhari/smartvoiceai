@@ -1,3 +1,5 @@
+// outlook.js - Added isSlotFree
+
 const msal = require('@azure/msal-node');
 const axios = require('axios');
 
@@ -72,6 +74,27 @@ async function getNextAvailableSlot(accessToken, afterDate) {
   }
 }
 
+async function isSlotFree(accessToken, start, end) {
+  if (!userEmail) throw new Error('USER_EMAIL env variable not set');
+  const url = `https://graph.microsoft.com/v1.0/users/${userEmail}/calendar/getSchedule`;
+  const body = {
+    schedules: [userEmail],
+    startTime: { dateTime: start.toISOString(), timeZone: 'UTC' },
+    endTime: { dateTime: end.toISOString(), timeZone: 'UTC' },
+    availabilityViewInterval: 60,
+  };
+  try {
+    const response = await axios.post(url, body, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const scheduleItems = response.data.value[0].scheduleItems;
+    return scheduleItems.length === 0;
+  } catch (error) {
+    console.error('isSlotFree: Error', error.message, error.stack);
+    return false;
+  }
+}
+
 async function createAppointment(accessToken, eventDetails) {
   if (!userEmail) throw new Error('USER_EMAIL env variable not set');
   console.log('createAppointment: Creating', eventDetails);
@@ -88,4 +111,4 @@ async function createAppointment(accessToken, eventDetails) {
   }
 }
 
-module.exports = { getAccessToken, getLastAppointment, getNextAvailableSlot, createAppointment };
+module.exports = { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment };

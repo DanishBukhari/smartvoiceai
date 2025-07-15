@@ -1,3 +1,4 @@
+// flow.js
 //the scenarios of the texts
 const { getResponse } = require('./nlp');
 const { getAccessToken, getLastAppointment, getNextAvailableSlot, createAppointment } = require('./outlook');
@@ -96,6 +97,27 @@ async function calculateTravelTime(origin, destination) {
   } catch (error) {
     console.error('calculateTravelTime: Error', error.message, error.stack);
     return 30;
+  }
+}
+
+async function isSlotFree(accessToken, start, end) {
+  if (!userEmail) throw new Error('USER_EMAIL env variable not set');
+  const url = `https://graph.microsoft.com/v1.0/users/${userEmail}/calendar/getSchedule`;
+  const body = {
+    schedules: [userEmail],
+    startTime: { dateTime: start.toISOString(), timeZone: 'UTC' },
+    endTime: { dateTime: end.toISOString(), timeZone: 'UTC' },
+    availabilityViewInterval: 60,
+  };
+  try {
+    const response = await axios.post(url, body, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const scheduleItems = response.data.value[0].scheduleItems;
+    return scheduleItems.length === 0;
+  } catch (error) {
+    console.error('isSlotFree: Error', error.message, error.stack);
+    return false;
   }
 }
 
@@ -203,7 +225,7 @@ async function learnFromInput(input) {
     // Clean the response to extract just the JSON
     let jsonStr = analysis.trim();
     if (jsonStr.includes('```json')) {
-      jsonStr = jsonStr.split('```json')[1].split('```')[0].trim();
+      jsonStr = jsonStr.split('```json')
     } else if (jsonStr.includes('```')) {
       jsonStr = jsonStr.split('```')[1].split('```')[0].trim();
     }
@@ -369,14 +391,13 @@ async function askBooking(input) {
 
 async function collectClientDetails(input) {
   console.log('collectClientDetails: Current data', stateMachine.clientData);
-  const details = ['name', 'email', 'phone', 'address'];
+  const details = ['name', 'email', 'address']; // Removed 'phone' since it's auto-set
   const currentDetail = details.find(d => !stateMachine.clientData[d]);
   if (currentDetail) {
     if (input) stateMachine.clientData[currentDetail] = input;
     const prompts = {
       name: "What's your full name, please?",
       email: "Could I have your email address?",
-      phone: "What's your phone number?",
       address: "And your full address?",
     };
     const response = await getResponse(prompts[currentDetail], stateMachine.conversationHistory);
@@ -385,9 +406,15 @@ async function collectClientDetails(input) {
     return response;
   } else {
     stateMachine.currentState = 'book_appointment';
-    const response = await getResponse("When would you like your appointment? Our day starts at 7 AM UTC.", stateMachine.conversationHistory);
-    stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-    console.log('collectClientDetails: Booking prompt', response);
+    let response;
+    if (stateMachine.clientData.urgent) {
+      // For urgent, directly compute and propose next slot
+      response = await handleAppointmentBooking('asap'); // Pass 'asap' to indicate urgent
+    } else {
+      response = await getResponse("When would you like your appointment? Our day starts at 7 AM UTC.", stateMachine.conversationHistory);
+      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+      console.log('collectClientDetails: Booking prompt', response);
+    }
     return response;
   }
 }
@@ -400,7 +427,7 @@ async function handleAppointmentBooking(input) {
     return "Sorry, I can't access the calendar right now. Please try again later.";
   }
 
-  // Use dynamic dates instead of hardcoded May 28
+  // Use dynamic dates
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const minStartDate = new Date(today.getTime() + 7 * 60 * 60 * 1000); // 7 AM today
@@ -425,10 +452,36 @@ async function handleAppointmentBooking(input) {
     console.log('handleAppointmentBooking: Earliest start time with travel', earliestStartTime);
   }
 
-  const nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
-  if (!nextSlot || nextSlot > maxEndDate) {
-    console.log('handleAppointmentBooking: No slot available');
-    return "Sorry, no slots are available today. Would you like to try another day?";
+  let nextSlot;
+  if (stateMachine.clientData.urgent || input.toLowerCase().includes('asap') || input.toLowerCase().includes('soon')) {
+    nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
+    if (!nextSlot || nextSlot > maxEndDate) {
+      console.log('handleAppointmentBooking: No slot available');
+      return "Sorry, no slots are available today. Would you like to try another day?";
+    }
+  } else {
+    // Parse preferred time from input
+    const parsePrompt = `Parse the preferred appointment time from: "${input}". Current time is ${now.toISOString()}. Return ISO datetime string (YYYY-MM-DDTHH:mm:00Z) or "invalid" if can't parse. Assume UTC. If no date, use today or tomorrow if past.`;
+    let preferredStr = await getResponse(parsePrompt);
+    if (preferredStr === "invalid") {
+      return await getResponse("Sorry, I didn't understand the time. When would you like your appointment?", stateMachine.conversationHistory);
+    }
+    const preferred = new Date(preferredStr);
+    if (isNaN(preferred.getTime())) {
+      return await getResponse("Sorry, I didn't understand the time. When would you like your appointment?", stateMachine.conversationHistory);
+    }
+    
+    const preferredEnd = new Date(preferred.getTime() + 60 * 60 * 1000);
+    const isFree = await isSlotFree(accessToken, preferred, preferredEnd);
+    if (preferred >= earliestStartTime && isFree) {
+      nextSlot = preferred;
+    } else {
+      nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
+      if (!nextSlot || nextSlot > maxEndDate) {
+        console.log('handleAppointmentBooking: No slot available');
+        return "Sorry, no slots are available today. Would you like to try another day?";
+      }
+    }
   }
 
   stateMachine.nextSlot = nextSlot;
