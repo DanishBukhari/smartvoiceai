@@ -30,10 +30,21 @@ async function handleVoice(req, res) {
   const B = baseUrl(req);
   const twiml = new VoiceResponse();
   
-  // Play intro audio first
-  twiml.play(`${B}/Introduction.mp3`);
+  // Generate intro with Deepgram
+  try {
+    const introBuffer = await synthesizeBuffer("Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
+    const introFile = `intro_${Date.now()}.mp3`;
+    const introPath = path.join(__dirname, 'public', introFile);
+    await fs.promises.writeFile(introPath, introBuffer);
+    twiml.play(`${B}/${introFile}`);
+  } catch (e) {
+    twiml.say({
+      voice: 'alice',
+      language: 'en-AU'
+    }, "Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
+  }
   
-  // Then gather speech
+  // Gather speech
   twiml.gather({
     input: 'speech',
     speechTimeout: 'auto',
@@ -43,7 +54,7 @@ async function handleVoice(req, res) {
     timeout: 15, // Give more time for initial response
   });
 
-  // Goodbye message using ElevenLabs
+  // Generate goodbye with Deepgram
   try {
     const goodbyeBuffer = await synthesizeBuffer("Thank you for calling. Goodbye.");
     const goodbyeFile = `goodbye_${Date.now()}.mp3`;
@@ -51,7 +62,10 @@ async function handleVoice(req, res) {
     await fs.promises.writeFile(goodbyePath, goodbyeBuffer);
     twiml.play(`${B}/${goodbyeFile}`);
   } catch (e) {
-    twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+    twiml.say({
+      voice: 'alice',
+      language: 'en-AU'
+    }, "Thank you for calling. Goodbye.");
   }
 
   res.type('text/xml').send(twiml.toString());
@@ -64,8 +78,8 @@ async function handleSpeech(req, res) {
   console.log('=== Speech Request Started ===');
   
   // Check environment variables
-  if (!process.env.ELEVENLABS_API_KEY) {
-    console.error('❌ Missing ELEVENLABS_API_KEY environment variable');
+  if (!process.env.DEEPGRAM_API_KEY) {
+    console.error('❌ Missing DEEPGRAM_API_KEY environment variable');
   }
   if (!process.env.OPENAI_API_KEY) {
     console.error('❌ Missing OPENAI_API_KEY environment variable');
@@ -75,7 +89,7 @@ async function handleSpeech(req, res) {
   const userText = req.body.SpeechResult || '';
   const speechConfidence = parseFloat(req.body.Confidence) || 0;
   
-  console.log('Environment check - ELEVENLABS_API_KEY:', !!process.env.ELEVENLABS_API_KEY);
+  console.log('Environment check - DEEPGRAM_API_KEY:', !!process.env.DEEPGRAM_API_KEY);
   console.log('Environment check - OPENAI_API_KEY:', !!process.env.OPENAI_API_KEY);
   
   // Check if this is a first interaction
@@ -95,7 +109,10 @@ async function handleSpeech(req, res) {
         await fs.promises.writeFile(outPath, buffer);
         twiml.play(`${B}/${file}`);
       } catch (e) {
-        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+        twiml.say({
+          voice: 'alice',
+          language: 'en-AU'
+        }, "I'm sorry, I didn't understand that.");
       }
       twiml.gather({
         input: 'speech',
@@ -124,7 +141,10 @@ async function handleSpeech(req, res) {
         await fs.promises.writeFile(outPath, buffer);
         twiml.play(`${req.protocol}://${req.get('Host')}/${file}`);
       } catch (e) {
-        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+        twiml.say({
+          voice: 'alice',
+          language: 'en-AU'
+        }, "I'm sorry, I'm taking too long to respond. Please try again.");
       }
       twiml.gather({
         input: 'speech',
@@ -160,7 +180,10 @@ async function handleSpeech(req, res) {
         await fs.promises.writeFile(outPath, buffer);
         twiml.play(`${B}/${file}`);
       } catch (e) {
-        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+        twiml.say({
+          voice: 'alice',
+          language: 'en-AU'
+        }, "I didn't catch that clearly. Could you please repeat?");
       }
       twiml.gather({
         input: 'speech',
@@ -201,11 +224,7 @@ async function handleSpeech(req, res) {
       
       audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);
       console.log('✅ TTS generation completed, buffer size:', audioBuffer?.length);
-      // Fallback: if buffer is the fallback marker, skip file save and use Twilio TTS
-      if (audioBuffer && audioBuffer.toString() === 'FALLBACK_TWILIO_TTS') {
-        console.warn('⚠️ Using Twilio TTS fallback due to TTS quota or error');
-        filename = null;
-      } else if (audioBuffer && audioBuffer.length > 0) {
+      if (audioBuffer && audioBuffer.length > 0) {
         const callSid = req.body.CallSid || Date.now().toString();
         filename = `${callSid}.mp3`;
         const outPath = path.join(__dirname, 'public', filename);
@@ -232,7 +251,6 @@ async function handleSpeech(req, res) {
       twiml.play(`${B}/${filename}`);
     } else {
       console.log('🔤 Using Twilio TTS fallback');
-      // Use Twilio TTS as fallback - this is the key fix
       twiml.say({
         voice: 'alice',
         language: 'en-AU'
@@ -275,7 +293,10 @@ async function handleSpeech(req, res) {
         await fs.promises.writeFile(outPath, buffer);
         twiml.play(`${req.protocol}://${req.get('Host')}/${file}`);
       } catch (e) {
-        twiml.play(`${B}/pregen_i_m_sorry__i_didn_t_under.mp3`);
+        twiml.say({
+          voice: 'alice',
+          language: 'en-AU'
+        }, "I'm sorry, there was an error. Please try again.");
       }
       twiml.gather({
         input: 'speech',
@@ -291,31 +312,30 @@ async function handleSpeech(req, res) {
   }
 }
 
-async function cleanupAudioFiles() {
-  try {
-    const publicDir = path.join(__dirname, 'public');
-    const files = await fs.promises.readdir(publicDir);
+// async function cleanupAudioFiles() {
+//   try {
+//     const publicDir = path.join(__dirname, 'public');
+//     const files = await fs.promises.readdir(publicDir);
     
-    for (const file of files) {
-      if (file.endsWith('.mp3') && file !== 'Introduction.mp3') {
-        const filePath = path.join(publicDir, file);
-        const stats = await fs.promises.stat(filePath);
-        const fileAge = Date.now() - stats.mtime.getTime();
+//     for (const file of files) {
+//       if (file.endsWith('.mp3')) {  // Remove Introduction.mp3 condition since it's not used
+//         const filePath = path.join(publicDir, file);
+//         const stats = await fs.promises.stat(filePath);
+//         const fileAge = Date.now() - stats.mtime.getTime();
         
-        // Delete files older than 1 hour
-        if (fileAge > 60 * 60 * 1000) {
-          await fs.promises.unlink(filePath);
-          console.log('Cleaned up audio file:', file);
-        }
-      }
-    }
-  } catch (error) {
-    console.error('Cleanup error:', error);
-  }
-}
+//         // Delete files older than 1 hour
+//         if (fileAge > 60 * 60 * 1000) {
+//           await fs.promises.unlink(filePath);
+//           console.log('Cleaned up audio file:', file);
+//         }
+//       }
+//     }
+//   } catch (error) {
+//     console.error('Cleanup error:', error);
+//   }
+// }
 
 // Run cleanup every hour
-setInterval(cleanupAudioFiles, 60 * 60 * 1000);
+// setInterval(cleanupAudioFiles, 60 * 60 * 1000);
 
 module.exports = { handleVoice, handleSpeech };
-

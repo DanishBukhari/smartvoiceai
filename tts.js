@@ -1,14 +1,18 @@
-// tts.js - Fixed Deepgram constructor
+// tts.js - Corrected to use Deepgram TTS without stream iterator issue
 
 const { DeepgramClient } = require('@deepgram/sdk');
-const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY });
+const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY);
 
 async function synthesizeBuffer(text) {
   try {
-    const { stream } = await deepgram.speak.request(
+    const response = await deepgram.speak.request(
       { text },
-      { model: 'aura-2-andromeda-en' }  // Adjust model as needed for voice
+      { model: 'aura-2-andromeda-en' }  // Adjust model as needed
     );
+    const stream = response.getStream();
+    if (!stream) {
+      throw new Error('No stream returned from Deepgram');
+    }
     
     const buffers = [];
     for await (const chunk of stream) {
