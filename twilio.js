@@ -251,6 +251,7 @@ async function handleSpeech(req, res) {
       twiml.play(`${B}/${filename}`);
     } else {
       console.log('🔤 Using Twilio TTS fallback');
+      // Use Twilio TTS as fallback
       twiml.say({
         voice: 'alice',
         language: 'en-AU'
@@ -312,30 +313,30 @@ async function handleSpeech(req, res) {
   }
 }
 
-// async function cleanupAudioFiles() {
-//   try {
-//     const publicDir = path.join(__dirname, 'public');
-//     const files = await fs.promises.readdir(publicDir);
+async function cleanupAudioFiles() {
+  try {
+    const publicDir = path.join(__dirname, 'public');
+    const files = await fs.promises.readdir(publicDir);
     
-//     for (const file of files) {
-//       if (file.endsWith('.mp3')) {  // Remove Introduction.mp3 condition since it's not used
-//         const filePath = path.join(publicDir, file);
-//         const stats = await fs.promises.stat(filePath);
-//         const fileAge = Date.now() - stats.mtime.getTime();
+    for (const file of files) {
+      if (file.endsWith('.mp3')) {
+        const filePath = path.join(publicDir, file);
+        const stats = await fs.promises.stat(filePath);
+        const fileAge = Date.now() - stats.mtime.getTime();
         
-//         // Delete files older than 1 hour
-//         if (fileAge > 60 * 60 * 1000) {
-//           await fs.promises.unlink(filePath);
-//           console.log('Cleaned up audio file:', file);
-//         }
-//       }
-//     }
-//   } catch (error) {
-//     console.error('Cleanup error:', error);
-//   }
-// }
+        // Delete files older than 1 hour
+        if (fileAge > 60 * 60 * 1000) {
+          await fs.promises.unlink(filePath);
+          console.log('Cleaned up audio file:', file);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Cleanup error:', error);
+  }
+}
 
 // Run cleanup every hour
-// setInterval(cleanupAudioFiles, 60 * 60 * 1000);
+setInterval(cleanupAudioFiles, 60 * 60 * 1000);
 
 module.exports = { handleVoice, handleSpeech };
