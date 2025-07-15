@@ -1,4 +1,4 @@
-// index.js - Modified to remove pre-generation and use Deepgram
+// index.js - Remove pre-generation code entirely
 
 require('dotenv').config();
 const express = require('express');
@@ -90,7 +90,7 @@ app.get('/test-tts', async (req, res) => {
   }
 });
 
-// Health endpoint - Modified for Deepgram (remove ElevenLabs quota check)
+// Health endpoint
 app.get('/health', async (req, res) => {
   res.json({
     status: 'ok',
