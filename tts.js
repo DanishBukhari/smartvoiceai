@@ -7,7 +7,7 @@ async function synthesizeBuffer(text) {
   try {
     const { stream } = await deepgram.speak.request(
       { text },
-      { model: 'aura-asteria-en' }  // Adjust model as needed for voice
+      { model: 'aura-2-andromeda-en' }  // Adjust model as needed for voice
     );
     
     const buffers = [];
