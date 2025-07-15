@@ -1,29 +1,9 @@
 //convert the text to speech
-// tts.js - Using Deepgram TTS without pre-generation
-
-const { DeepgramSdk } = require('@deepgram/sdk');
-const deepgram = new DeepgramSdk({ apiKey: process.env.DEEPGRAM_API_KEY });
-
-async function synthesizeBuffer(text) {
-  try {
-    const { stream } = await deepgram.speak.request(
-      { text },
-      { model: 'aura-asteria-en' }  // Adjust model as needed for voice
-    );
-    
-    const buffers = [];
-    for await (const chunk of stream) {
-      buffers.push(chunk);
-    }
-    
-    return Buffer.concat(buffers);
-  } catch (error) {
-    console.error('Deepgram TTS error:', error);
-    throw error;
-  }
-}
-
-module.exports = { synthesizeBuffer };
+// const https = require('https');
+// const path = require('path');
+// const fs = require('fs');
+// const crypto = require('crypto');
+// const DYNAMIC_TTS_LOG = path.join(__dirname, 'tts-dynamic.log');
 
 // Add simple caching
 // const responseCache = new Map();
@@ -419,3 +399,28 @@ module.exports = { synthesizeBuffer };
 // }
 
 // module.exports = { synthesizeBuffer, preloadCommonResponses, preloadCoreResponses };
+// tts.js - Corrected Deepgram import and usage
+
+const { DeepgramClient } = require('@deepgram/sdk');
+const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY);
+
+async function synthesizeBuffer(text) {
+  try {
+    const { stream } = await deepgram.speak.request(
+      { text },
+      { model: 'aura-asteria-en' }  // Adjust model as needed for voice
+    );
+    
+    const buffers = [];
+    for await (const chunk of stream) {
+      buffers.push(chunk);
+    }
+    
+    return Buffer.concat(buffers);
+  } catch (error) {
+    console.error('Deepgram TTS error:', error);
+    throw error;
+  }
+}
+
+module.exports = { synthesizeBuffer };
