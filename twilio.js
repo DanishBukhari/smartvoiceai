@@ -1,5 +1,4 @@
-// twilio.js - Full code with dynamic intro/goodbye using Deepgram, removed Introduction.mp3
-
+// twilio.js
 const twilio = require('twilio');
 const { VoiceResponse } = twilio.twiml;
 const { handleInput, stateMachine } = require('./flow');
@@ -93,6 +92,11 @@ async function handleSpeech(req, res) {
   console.log('Environment check - DEEPGRAM_API_KEY:', !!process.env.DEEPGRAM_API_KEY);
   console.log('Environment check - OPENAI_API_KEY:', !!process.env.OPENAI_API_KEY);
   
+  // Set phone from caller if not set
+  if (!stateMachine.clientData.phone && req.body.Caller) {
+    stateMachine.clientData.phone = req.body.Caller;
+  }
+
   // Check if this is a first interaction
   const isFirstInteraction = stateMachine.currentState === 'start';
   
@@ -220,7 +224,7 @@ async function handleSpeech(req, res) {
       // Match the timeout with tts.js (4 seconds)
       const ttsPromise = synthesizeBuffer(reply);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('TTS timeout')), 2000)
+        setTimeout(() => reject(new Error('TTS timeout')), 4000)  // Increased to 4000ms
       );
       
       audioBuffer = await Promise.race([ttsPromise, timeoutPromise]);
