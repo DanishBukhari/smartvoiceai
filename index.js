@@ -1,11 +1,11 @@
-// index.js - Full streaming implementation with Deepgram STT/TTS, Twilio Media Streams, and flow.js integration
+// index.js - Full streaming implementation with Deepgram v3 STT/TTS, Twilio Media Streams, and flow.js integration
 
 require('dotenv').config();
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const twilio = require('twilio');
 const WebSocket = require('ws');
-const { Deepgram } = require('@deepgram/sdk');
+const { createClient } = require('@deepgram/sdk');
 const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
@@ -14,7 +14,7 @@ const fs = require('fs');
 const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
-const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.enable('trust proxy');
@@ -59,9 +59,9 @@ wss.on('connection', (ws) => {
     nextSlot: null,
   });
 
-  // Connect to Deepgram for live STT
-  const dgSocket = deepgram.transcription.live({
-    model: 'nova',
+  // Connect to Deepgram for live STT (v3 syntax)
+  const dgConnection = deepgram.listen.live({
+    model: 'nova-2',
     language: 'en-AU',
     smart_format: true,
     filler_words: false,
@@ -70,10 +70,10 @@ wss.on('connection', (ws) => {
     endpointing: 250,
   });
 
-  dgSocket.on('open', () => console.log('Deepgram STT connected'));
-  dgSocket.on('error', (error) => console.error('Deepgram STT error', error));
+  dgConnection.on('open', () => console.log('Deepgram STT connected'));
+  dgConnection.on('error', (error) => console.error('Deepgram STT error', error));
 
-  dgSocket.on('transcript', async (data) => {
+  dgConnection.on('transcript', async (data) => {
     if (data.channel.alternatives[0].transcript.length > 0) {
       console.log('STT Transcript:', data.channel.alternatives[0].transcript);
       
@@ -82,33 +82,30 @@ wss.on('connection', (ws) => {
         const reply = await handleInput(transcript);
         console.log('NLP Reply:', reply);
         
-        // Generate TTS with Deepgram
+        // Generate TTS with Deepgram (v3 syntax)
         try {
-          const ttsResponse = await deepgram.speak.request({ text: reply }, { model: 'aura-asteria-en' });
-          const ttsStream = await ttsResponse.getStream();
-          const ttsBuffers = [];
+          const { result: ttsResponse, error: ttsError } = await deepgram.speak.text({ text: reply }, { model: 'aura-asteria-en' });
+          if (ttsError) throw ttsError;
+          const ttsStream = ttsResponse.stream;
+          if (!ttsStream) {
+            throw new Error('No TTS stream from Deepgram');
+          }
+          
           const ttsReader = ttsStream.getReader();
+          isSpeaking = true;
           while (true) {
             const { done, value } = await ttsReader.read();
             if (done) break;
-            if (value) ttsBuffers.push(value);
-          }
-          const ttsAudio = Buffer.concat(ttsBuffers);
-          
-          // Send TTS audio to Twilio as base64 in chunks (for streaming effect)
-          isSpeaking = true;
-          const chunkSize = 4096;
-          for (let i = 0; i < ttsAudio.length; i += chunkSize) {
-            const chunk = ttsAudio.slice(i, i + chunkSize);
-            const base64Chunk = chunk.toString('base64');
-            ws.send(JSON.stringify({
-              event: 'media',
-              streamSid: streamSid,
-              media: {
-                payload: base64Chunk
-              }
-            }));
-            await new Promise(resolve => setTimeout(resolve, 32)); // ~30ms per chunk for real-time
+            if (value) {
+              const base64Chunk = value.toString('base64');
+              ws.send(JSON.stringify({
+                event: 'media',
+                streamSid: streamSid,
+                media: {
+                  payload: base64Chunk
+                }
+              }));
+            }
           }
           isSpeaking = false;
           
@@ -122,13 +119,10 @@ wss.on('connection', (ws) => {
         } catch (error) {
           console.error('TTS error:', error);
           // Fallback to Twilio TTS
-          const twiml = new VoiceResponse();
-          twiml.say({
-            voice: 'alice',
-            language: 'en-AU'
-          }, reply);
-          // Send TwiML to Twilio - but since it's streaming, we might need to handle differently
-          // For simplicity, assume fallback is text
+          ws.send(JSON.stringify({
+            event: 'clear',
+            streamSid: streamSid
+          }));
         }
       }
     }
@@ -147,8 +141,8 @@ wss.on('connection', (ws) => {
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
         mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
-        if (!isSpeaking && dgSocket.getReadyState() === WebSocket.OPEN) {
-          dgSocket.send(audioData);
+        if (!isSpeaking && dgConnection.readyState === WebSocket.OPEN) {
+          dgConnection.send(audioData);
         }
         break;
       case 'stop':
@@ -158,7 +152,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (dgSocket) dgSocket.finish();
+    if (dgConnection) dgConnection.close();
     console.log('WebSocket closed');
   });
 });
@@ -189,15 +183,16 @@ app.get('/test-tts', async (req, res) => {
     const testText = req.query.text || "Hello, this is a test.";
     
     console.log('Testing TTS with text:', testText);
-    const audioBuffer = await synthesizeBuffer(testText);
-    
-    if (audioBuffer && audioBuffer.length > 0) {
-      res.set('Content-Type', 'audio/mpeg');
-      res.set('Content-Length', audioBuffer.length);
-      res.send(audioBuffer);
-    } else {
-      res.status(500).json({ error: 'Empty audio buffer' });
+    const { result, error } = await deepgram.speak.text({ text: testText }, { model: 'aura-asteria-en' });
+    if (error) throw error;
+    const stream = result.stream;
+    if (!stream) {
+      res.status(500).json({ error: 'Empty audio stream' });
+      return;
     }
+    
+    res.set('Content-Type', 'audio/wav');
+    stream.pipe(res);
   } catch (error) {
     console.error('TTS test error:', error);
     res.status(500).json({ error: error.message });
