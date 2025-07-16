@@ -5,7 +5,7 @@ async function synthesizeBuffer(text) {
 try {
 const response = await deepgram.speak.request(
 { text },
-{ model: 'aura-2-andromeda-en' }  // Adjust model as needed
+{ model: 'aura-2-andromeda-en' }
 );
 const stream = await response.getStream();
 if (!stream) {
