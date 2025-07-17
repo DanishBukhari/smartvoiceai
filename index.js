@@ -41,11 +41,11 @@ app.post('/voice', (req, res) => {
 // WebSocket for media stream
 wss.on('connection', (ws) => {
   console.log('New WebSocket connection');
-  
+
   let streamSid;
   let mediaBuffer = Buffer.alloc(0);
   let isSpeaking = false;
-  
+
   // Reset state for new call
   Object.assign(stateMachine, {
     currentState: 'start',
@@ -73,12 +73,12 @@ wss.on('connection', (ws) => {
   dgConnection.on('transcript', async (data) => {
     if (data.channel.alternatives[0].transcript.length > 0) {
       console.log('STT Transcript:', data.channel.alternatives[0].transcript);
-      
+
       if (data.is_final) {
         const transcript = data.channel.alternatives[0].transcript;
         const reply = await handleInput(transcript);
         console.log('NLP Reply:', reply);
-        
+
         // Generate streaming TTS with Deepgram v3
         const ttsConnection = deepgram.speak.live({
           model: 'aura-asteria-en',
@@ -93,6 +93,7 @@ wss.on('connection', (ws) => {
         });
 
         ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+          console.log('Sending audio chunk, bytes:', audioChunk.length);
           const base64Chunk = Buffer.from(audioChunk).toString('base64');
           ws.send(JSON.stringify({
             event: 'media',
@@ -100,6 +101,7 @@ wss.on('connection', (ws) => {
             media: { payload: base64Chunk }
           }));
         });
+
 
         ttsConnection.on(LiveTTSEvents.Flushed, () => {
           ws.send(JSON.stringify({
