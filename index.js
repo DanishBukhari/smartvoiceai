@@ -82,7 +82,7 @@ wss.on('connection', (ws) => {
         // Generate streaming TTS with Deepgram v3
         const ttsConnection = deepgram.speak.live({
           model: 'aura-asteria-en',
-          encoding: 'linear16',
+          encoding: 'mulaw',
           sample_rate: 8000,
         });
 
@@ -167,7 +167,7 @@ wss.on('connection', (ws) => {
 async function sendTTS(ws, streamSid, text) {
   const ttsConnection = deepgram.speak.live({
     model: 'aura-asteria-en',
-    encoding: 'linear16',
+    encoding: 'mulaw',
     sample_rate: 8000,
   });
 
@@ -235,7 +235,7 @@ app.get('/test-tts', async (req, res) => {
 
     const { result, error } = await deepgram.tts.speech(
       { text: testText },
-      { model: 'aura-asteria-en', encoding: 'linear16', sample_rate: 48000 }
+      { model: 'aura-asteria-en', encoding: 'mulaw', sample_rate: 48000 }
     );
     if (error) throw error;
     const audioBuffer = result.audio;
