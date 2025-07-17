@@ -167,7 +167,7 @@ wss.on('connection', (ws) => {
 async function sendTTS(ws, streamSid, text) {
   const ttsConnection = deepgram.speak.live({
     model: 'aura-asteria-en',
-    encoding: 'mulaw',
+    encoding: 'linear16',
     sample_rate: 8000,
   });
 
