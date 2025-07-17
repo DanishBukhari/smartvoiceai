@@ -60,6 +60,8 @@ wss.on('connection', (ws) => {
   const dgConnection = deepgram.listen.live({
     model: 'nova-2',
     language: 'en-AU',
+    encoding: 'mulaw',     // Twilio sends 8 kHz μ‑law
+    sample_rate: 8000,
     smart_format: true,
     filler_words: false,
     utterances: true,
@@ -148,7 +150,8 @@ wss.on('connection', (ws) => {
         break;
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
-        mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
+        console.log('[TWILIO] received media bytes:', audioData.length);
+        // mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
         if (!isSpeaking && dgConnection.readyState === WebSocket.OPEN) {
           dgConnection.send(audioData);
         }
