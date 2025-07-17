@@ -1,4 +1,4 @@
-// outlook.js - Added isSlotFree
+// outlook.js - Updated USER_EMAIL handling
 
 const msal = require('@azure/msal-node');
 const axios = require('axios');

@@ -1,4 +1,4 @@
-// the help of tha ai for ready scenarios,,
+// the help of tha ai for ready scenarios,, //nlp.js
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({

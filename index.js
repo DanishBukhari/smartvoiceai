@@ -1,3 +1,4 @@
+
 // index.js - Full streaming implementation with Deepgram v3 STT/TTS, Twilio Media Streams, and flow.js integration
 
 require('dotenv').config();
@@ -5,7 +6,7 @@ const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const twilio = require('twilio');
 const WebSocket = require('ws');
-const { createClient } = require('@deepgram/sdk');
+const { createClient, LiveTTSEvents } = require('@deepgram/sdk');
 const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
@@ -33,10 +34,7 @@ app.post('/voice', (req, res) => {
     url: `wss://${req.headers.host}/media`,
     name: 'voiceStream',
   });
-  twiml.say({
-    voice: 'alice',
-    language: 'en-AU'
-  }, "Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
+  twiml.pause({ length: 1 });  // Small pause to ensure stream is ready
 
   res.type('text/xml').send(twiml.toString());
 });
@@ -63,6 +61,8 @@ wss.on('connection', (ws) => {
   const dgConnection = deepgram.listen.live({
     model: 'nova-2',
     language: 'en-AU',
+    encoding: 'linear16',       // tell DG it’s μ‑law
+    sample_rate: 8000,
     smart_format: true,
     filler_words: false,
     utterances: true,
@@ -82,48 +82,55 @@ wss.on('connection', (ws) => {
         const reply = await handleInput(transcript);
         console.log('NLP Reply:', reply);
         
-        // Generate TTS with Deepgram (v3 syntax)
-        try {
-          const { result: ttsResponse, error: ttsError } = await deepgram.speak.text({ text: reply }, { model: 'aura-asteria-en' });
-          if (ttsError) throw ttsError;
-          const ttsStream = ttsResponse.stream;
-          if (!ttsStream) {
-            throw new Error('No TTS stream from Deepgram');
-          }
-          
-          const ttsReader = ttsStream.getReader();
-          isSpeaking = true;
-          while (true) {
-            const { done, value } = await ttsReader.read();
-            if (done) break;
-            if (value) {
-              const base64Chunk = value.toString('base64');
-              ws.send(JSON.stringify({
-                event: 'media',
-                streamSid: streamSid,
-                media: {
-                  payload: base64Chunk
-                }
-              }));
-            }
-          }
-          isSpeaking = false;
-          
+        // Generate streaming TTS with Deepgram v3
+        const ttsConnection = deepgram.speak.live({
+          model: 'aura-asteria-en',
+          encoding: 'linear16',
+          sample_rate: 8000,
+        });
+
+        ttsConnection.on(LiveTTSEvents.Open, () => {
+          // send text and then flush
+          ttsConnection.sendText(reply);
+          ttsConnection.flush();
+        });
+
+        ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+          const base64Chunk = Buffer.from(audioChunk).toString('base64');
+          ws.send(JSON.stringify({
+            event: 'media',
+            streamSid: streamSid,
+            media: { payload: base64Chunk }
+          }));
+        });
+
+        ttsConnection.on(LiveTTSEvents.Flushed, () => {
           ws.send(JSON.stringify({
             event: 'mark',
             streamSid: streamSid,
-            mark: {
-              name: 'endOfResponse'
-            }
+            mark: { name: 'endOfResponse' }
           }));
-        } catch (error) {
-          console.error('TTS error:', error);
-          // Fallback to Twilio TTS
+          isSpeaking = false;
+          // correctly close the Deepgram TTS WebSocket
+          if (ttsConnection.ws && ttsConnection.ws.close) {
+            ttsConnection.ws.close();
+          }
+        });
+
+        ttsConnection.on(LiveTTSEvents.Error, (err) => {
+          console.error('Deepgram TTS error:', err);
+          // Fallback to Twilio TTS if desired
           ws.send(JSON.stringify({
             event: 'clear',
             streamSid: streamSid
           }));
-        }
+          isSpeaking = false;
+          if (ttsConnection.ws && ttsConnection.ws.close) {
+            ttsConnection.ws.close();
+          }
+        });
+
+        isSpeaking = true;
       }
     }
   });
@@ -137,6 +144,8 @@ wss.on('connection', (ws) => {
       case 'start':
         streamSid = msg.streamSid;
         console.log('Stream started, Sid:', streamSid);
+        // Send initial greeting when stream starts
+        sendTTS(ws, streamSid, "Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
         break;
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
@@ -152,10 +161,55 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (dgConnection) dgConnection.close();
+    if (dgConnection) dgConnection.finish();
     console.log('WebSocket closed');
   });
 });
+
+// Function to send TTS audio via WebSocket
+async function sendTTS(ws, streamSid, text) {
+  const ttsConnection = deepgram.speak.live({
+    model: 'aura-asteria-en',
+    encoding: 'mulaw',
+    sample_rate: 8000,
+  });
+
+  ttsConnection.on(LiveTTSEvents.Open, () => {
+    ttsConnection.sendText(text);
+    ttsConnection.flush();
+  });
+
+  ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+    const base64Chunk = Buffer.from(audioChunk).toString('base64');
+    ws.send(JSON.stringify({
+      event: 'media',
+      streamSid: streamSid,
+      media: { payload: base64Chunk }
+    }));
+  });
+
+  ttsConnection.on(LiveTTSEvents.Flushed, () => {
+    ws.send(JSON.stringify({
+      event: 'mark',
+      streamSid: streamSid,
+      mark: { name: 'endOfResponse' }
+    }));
+    if (ttsConnection.ws && ttsConnection.ws.close) {
+      ttsConnection.ws.close();
+    }
+  });
+
+  ttsConnection.on(LiveTTSEvents.Error, (err) => {
+    console.error('Initial TTS error:', err);
+    ws.send(JSON.stringify({
+      event: 'clear',
+      streamSid: streamSid
+    }));
+    if (ttsConnection.ws && ttsConnection.ws.close) {
+      ttsConnection.ws.close();
+    }
+  });
+}
 
 // Healthcheck
 app.get('/test', (_, res) => {
@@ -181,18 +235,15 @@ app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
 app.get('/test-tts', async (req, res) => {
   try {
     const testText = req.query.text || "Hello, this is a test.";
-    
-    console.log('Testing TTS with text:', testText);
-    const { result, error } = await deepgram.speak.text({ text: testText }, { model: 'aura-asteria-en' });
+
+    const { result, error } = await deepgram.tts.speech(
+      { text: testText },
+      { model: 'aura-asteria-en', encoding: 'linear16', sample_rate: 48000 }
+    );
     if (error) throw error;
-    const stream = result.stream;
-    if (!stream) {
-      res.status(500).json({ error: 'Empty audio stream' });
-      return;
-    }
-    
+    const audioBuffer = result.audio;
     res.set('Content-Type', 'audio/wav');
-    stream.pipe(res);
+    res.send(audioBuffer);
   } catch (error) {
     console.error('TTS test error:', error);
     res.status(500).json({ error: error.message });
