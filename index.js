@@ -1,4 +1,3 @@
-
 // index.js - Full streaming implementation with Deepgram v3 STT/TTS, Twilio Media Streams, and flow.js integration
 
 require('dotenv').config();
@@ -61,8 +60,6 @@ wss.on('connection', (ws) => {
   const dgConnection = deepgram.listen.live({
     model: 'nova-2',
     language: 'en-AU',
-    encoding: 'linear16',       // tell DG it’s μ‑law
-    sample_rate: 8000,
     smart_format: true,
     filler_words: false,
     utterances: true,
@@ -85,7 +82,7 @@ wss.on('connection', (ws) => {
         // Generate streaming TTS with Deepgram v3
         const ttsConnection = deepgram.speak.live({
           model: 'aura-asteria-en',
-          encoding: 'linear16',
+          encoding: 'mulaw',
           sample_rate: 8000,
         });
 
@@ -271,3 +268,4 @@ const port = process.env.PORT || 3000;
 server.listen(port, () => {
   console.log(`🚀 Server started on ${port}`);
 });
+
