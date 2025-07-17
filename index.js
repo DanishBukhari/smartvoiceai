@@ -237,7 +237,7 @@ app.get('/test-tts', async (req, res) => {
 
     const { result, error } = await deepgram.tts.speech(
       { text: testText },
-      { model: 'aura-asteria-en', encoding: 'mulaw', sample_rate: 48000 }
+      { model: 'aura-asteria-en', encoding: 'mulaw', sample_rate: 8000 }
     );
     if (error) throw error;
     const audioBuffer = result.audio;
