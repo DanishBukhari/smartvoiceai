@@ -160,7 +160,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (dgConnection) dgConnection.finish();
+    if (dgConnection) dgConnection.close();
     console.log('WebSocket closed');
   });
 });
