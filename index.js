@@ -151,7 +151,7 @@ wss.on('connection', (ws) => {
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
         console.log('[TWILIO] received media bytes:', audioData.length);
-        // mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
+        mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
         if (!isSpeaking && dgConnection.readyState === WebSocket.OPEN) {
           dgConnection.send(audioData);
         }
