@@ -1,7 +1,6 @@
 // index.js - Full streaming implementation with Deepgram v3 STT/TTS, Twilio Media Streams, and flow.js integration
 
 require('dotenv').config();
-const { OAuth2Client } = require('google-auth-library');
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const twilio = require('twilio');
@@ -11,6 +10,7 @@ const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
 const fs = require('fs');
+const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 const server = require('http').createServer(app);
@@ -66,6 +66,8 @@ wss.on('connection', (ws) => {
     utterances: true,
     interim_results: true,
     endpointing: 250,
+    encoding: 'mulaw',
+    sample_rate: 8000,
   });
 
   dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram STT connected'));
