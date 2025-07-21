@@ -10,6 +10,7 @@ const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
 const fs = require('fs');
+const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 const server = require('http').createServer(app);
@@ -268,6 +269,39 @@ app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
   if (!res.headersSent) {
     res.status(500).send('Server error');
+  }
+});
+
+// OAuth2 callback for Google Calendar refresh token (production)
+const oauth2Client = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  'https://smartvoiceai-fa77bfa7f137.herokuapp.com/oauth2callback'  // Your Heroku URL
+);
+
+app.get('/auth', (req, res) => {
+  const authorizeUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/calendar'],
+    prompt: 'consent',
+  });
+  res.redirect(authorizeUrl);
+});
+
+app.get('/oauth2callback', async (req, res) => {
+  const code = req.query.code;
+  if (code) {
+    try {
+      const { tokens } = await oauth2Client.getToken(code);
+      console.log('Access Token:', tokens.access_token);
+      console.log('Refresh Token:', tokens.refresh_token);
+      res.send(`OAuth complete. Refresh Token: ${tokens.refresh_token}. Copy this to your .env GOOGLE_REFRESH_TOKEN.`);
+    } catch (error) {
+      console.error('OAuth callback error:', error);
+      res.status(500).send('Error exchanging code for tokens');
+    }
+  } else {
+    res.status(400).send('No code provided');
   }
 });
 
