@@ -5,7 +5,7 @@ const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const twilio = require('twilio');
 const WebSocket = require('ws');
-const { createClient, LiveTTSEvents } = require('@deepgram/sdk');
+const { createClient, LiveTranscriptionEvents, SpeakEvents } = require('@deepgram/sdk');
 const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
@@ -33,7 +33,11 @@ app.post('/voice', (req, res) => {
     url: `wss://${req.headers.host}/media`,
     name: 'voiceStream',
   });
-  twiml.pause({ length: 1 });  // Small pause to ensure stream is ready
+  // Initial fallback greeting with Twilio Say to ensure audio starts
+  twiml.say({
+    voice: 'alice',
+    language: 'en-AU'
+  }, "Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
 
   res.type('text/xml').send(twiml.toString());
 });
@@ -65,12 +69,14 @@ wss.on('connection', (ws) => {
     utterances: true,
     interim_results: true,
     endpointing: 250,
+    encoding: 'mulaw',
+    sample_rate: 8000,  // Twilio audio format
   });
 
-  dgConnection.on('open', () => console.log('Deepgram STT connected'));
-  dgConnection.on('error', (error) => console.error('Deepgram STT error', error));
+  dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram STT connected'));
+  dgConnection.on(LiveTranscriptionEvents.Error, (error) => console.error('Deepgram STT error', error));
 
-  dgConnection.on('transcript', async (data) => {
+  dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
     if (data.channel.alternatives[0].transcript.length > 0) {
       console.log('STT Transcript:', data.channel.alternatives[0].transcript);
       
@@ -79,62 +85,55 @@ wss.on('connection', (ws) => {
         const reply = await handleInput(transcript);
         console.log('NLP Reply:', reply);
         
-        // Generate TTS with Deepgram (v3 syntax)
-        try {
-          const ttsConnection = deepgram.speak.live({
-            model: 'aura-asteria-en',
-            encoding: 'linear16',
-            sample_rate: 8000,
-          });
+        // Generate TTS with Deepgram live (v3 syntax for streaming TTS)
+        const ttsConnection = deepgram.speak.live({
+          model: 'aura-asteria-en',
+          encoding: 'mulaw',
+          sample_rate: 8000,
+        });
 
-          ttsConnection.on(LiveTTSEvents.Open, () => {
-            ttsConnection.sendText(reply);
-            ttsConnection.flush();
-          });
+        ttsConnection.on(SpeakEvents.Open, () => {
+          console.log('Deepgram TTS connected');
+          ttsConnection.sendText(reply);
+          ttsConnection.flush();
+        });
 
-          ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
-            const base64Chunk = Buffer.from(audioChunk).toString('base64');
-            ws.send(JSON.stringify({
-              event: 'media',
-              streamSid: streamSid,
-              media: {
-                payload: base64Chunk
-              }
-            }));
-          });
+        ttsConnection.on(SpeakEvents.Audio, (audioChunk) => {
+          console.log('Sending TTS audio chunk');
+          const base64Chunk = Buffer.from(audioChunk).toString('base64');
+          ws.send(JSON.stringify({
+            event: 'media',
+            streamSid: streamSid,
+            media: {
+              payload: base64Chunk
+            }
+          }));
+        });
 
-          ttsConnection.on(LiveTTSEvents.Flushed, () => {
-            ws.send(JSON.stringify({
-              event: 'mark',
-              streamSid: streamSid,
-              mark: {
-                name: 'endOfResponse'
-              }
-            }));
-            isSpeaking = false;
-            ttsConnection.close();
-          });
+        ttsConnection.on(SpeakEvents.Flushed, () => {
+          console.log('TTS flushed');
+          ws.send(JSON.stringify({
+            event: 'mark',
+            streamSid: streamSid,
+            mark: {
+              name: 'endOfResponse'
+            }
+          }));
+          isSpeaking = false;
+          ttsConnection.close();
+        });
 
-          ttsConnection.on(LiveTTSEvents.Error, (err) => {
-            console.error('Deepgram TTS error:', err);
-            ws.send(JSON.stringify({
-              event: 'clear',
-              streamSid: streamSid
-            }));
-            isSpeaking = false;
-            ttsConnection.close();
-          });
-
-          isSpeaking = true;
-        } catch (error) {
-          console.error('TTS error:', error);
-          // Fallback to Twilio TTS
+        ttsConnection.on(SpeakEvents.Error, (err) => {
+          console.error('Deepgram TTS error:', err);
           ws.send(JSON.stringify({
             event: 'clear',
             streamSid: streamSid
           }));
           isSpeaking = false;
-        }
+          ttsConnection.close();
+        });
+
+        isSpeaking = true;
       }
     }
   });
@@ -175,16 +174,17 @@ async function sendTTS(ws, streamSid, text) {
   try {
     const ttsConnection = deepgram.speak.live({
       model: 'aura-asteria-en',
-      encoding: 'linear16',
+      encoding: 'mulaw',
       sample_rate: 8000,
     });
 
-    ttsConnection.on(LiveTTSEvents.Open, () => {
+    ttsConnection.on(SpeakEvents.Open, () => {
+      console.log('Deepgram TTS connected');
       ttsConnection.sendText(text);
       ttsConnection.flush();
     });
 
-    ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+    ttsConnection.on(SpeakEvents.Audio, (audioChunk) => {
       const base64Chunk = Buffer.from(audioChunk).toString('base64');
       ws.send(JSON.stringify({
         event: 'media',
@@ -195,7 +195,7 @@ async function sendTTS(ws, streamSid, text) {
       }));
     });
 
-    ttsConnection.on(LiveTTSEvents.Flushed, () => {
+    ttsConnection.on(SpeakEvents.Flushed, () => {
       ws.send(JSON.stringify({
         event: 'mark',
         streamSid: streamSid,
@@ -206,7 +206,7 @@ async function sendTTS(ws, streamSid, text) {
       ttsConnection.close();
     });
 
-    ttsConnection.on(LiveTTSEvents.Error, (err) => {
+    ttsConnection.on(SpeakEvents.Error, (err) => {
       console.error('Initial TTS error:', err);
       ws.send(JSON.stringify({
         event: 'clear',
