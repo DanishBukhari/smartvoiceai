@@ -1,6 +1,7 @@
 // index.js - Full streaming implementation with Deepgram v3 STT/TTS, Twilio Media Streams, and flow.js integration
 
 require('dotenv').config();
+const { OAuth2Client } = require('google-auth-library');
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const twilio = require('twilio');
