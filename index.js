@@ -82,7 +82,7 @@ wss.on('connection', (ws) => {
         // Generate TTS with Deepgram (v3 syntax)
         try {
           const ttsConnection = deepgram.speak.live({
-            model: 'aura-2-andromeda-en',
+            model: 'aura-andromeda-en',
             encoding: 'mulaw',
             sample_rate: 8000,
           });
@@ -177,7 +177,7 @@ wss.on('connection', (ws) => {
 async function sendTTS(ws, streamSid, text) {
   try {
     const ttsConnection = deepgram.speak.live({
-      model: 'aura-2-andromeda-en',
+      model: 'aura-andromeda-en',
       encoding: 'mulaw',
       sample_rate: 8000,
     });
