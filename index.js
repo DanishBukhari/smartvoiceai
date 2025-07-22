@@ -1,4 +1,4 @@
-// server.js
+// index.js
 require('dotenv').config();
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
@@ -18,25 +18,31 @@ const oauth2Client = new OAuth2Client(
   `https://${process.env.HEROKU_APP}.herokuapp.com/oauth2callback`
 );
 
+// Serve static assets (if any)
 app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
 
-// — Twilio → start streaming voice frames to /media
+// —————————
+// 1) Twilio voice webhook → start media stream
+// —————————
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
-  const conn = twiml.connect();
-  conn.stream({ url: `wss://${req.headers.host}/media`, name: 'voiceStream' });
+  const connect = twiml.connect();
+  connect.stream({ url: `wss://${req.headers.host}/media`, name: 'voiceStream' });
   twiml.pause({ length: 1 });
   res.type('text/xml').send(twiml.toString());
 });
 
+// —————————
+// 2) WebSocket handler for media & Deepgram STT/TTS
+// —————————
 wss.on('connection', (ws) => {
   let streamSid;
   let sttReady = false;
   let ttsInFlight = false;
   let greetingSent = false;
 
-  // Reset state
+  // Reset state machine
   Object.assign(stateMachine, {
     currentState: 'start',
     questionIndex: 0,
@@ -47,7 +53,7 @@ wss.on('connection', (ws) => {
     bookingRetryCount: 0
   });
 
-  // Setup STT listener
+  // Setup deepgram STT listener
   const dgStt = deepgram.listen.live({
     model: 'nova-2',
     language: 'en-AU',
@@ -57,47 +63,74 @@ wss.on('connection', (ws) => {
     encoding: 'mulaw',
     sample_rate: 8000
   });
-  dgStt.on(LiveTranscriptionEvents.Open, () => sttReady = true);
+
+  dgStt.on(LiveTranscriptionEvents.Open, () => {
+    console.log('Deepgram STT connected');
+    sttReady = true;
+  });
+
+  dgStt.on(LiveTranscriptionEvents.Error, (err) => {
+    console.error('Deepgram STT error', err);
+  });
+
   dgStt.on(LiveTranscriptionEvents.Transcript, async (data) => {
     if (!data.is_final) return;
-    const text = data.channel.alternatives[0].transcript;
-    if (!text || ttsInFlight) return;
-    const reply = await handleInput(text);
+    const transcript = data.channel.alternatives[0].transcript.trim();
+    if (!transcript || ttsInFlight) return;
+
+    console.log('STT Transcript:', transcript);
+    const reply = await handleInput(transcript);
+    console.log('NLP Reply:', reply);
+
     ttsInFlight = true;
     speak(ws, streamSid, reply);
   });
 
+  // Handle incoming Twilio media messages
   ws.on('message', (raw) => {
     const msg = JSON.parse(raw);
-    if (msg.event === 'start') {
-      streamSid = msg.streamSid;
-      if (!greetingSent) {
-        greetingSent = true;
-        speak(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
-      }
-    }
-    if (msg.event === 'media' && sttReady) {
-      const audio = Buffer.from(msg.media.payload, 'base64');
-      dgStt.send(audio);
-    }
-    if (msg.event === 'stop') {
-      dgStt.finish();
+    switch (msg.event) {
+      case 'start':
+        streamSid = msg.streamSid;
+        console.log('Stream started, SID:', streamSid);
+        if (!greetingSent) {
+          greetingSent = true;
+          // Send initial greeting exactly once
+          speak(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
+        }
+        break;
+      case 'media':
+        if (sttReady && !ttsInFlight) {
+          const audio = Buffer.from(msg.media.payload, 'base64');
+          dgStt.send(audio);
+        }
+        break;
+      case 'stop':
+        console.log('Stream stopped');
+        dgStt.finish();
+        break;
     }
   });
 
-  ws.on('close', () => dgStt.finish());
+  ws.on('close', () => {
+    console.log('WebSocket closed');
+    dgStt.finish();
+  });
 });
 
+// Helper to speak via Deepgram TTS
 function speak(ws, streamSid, text) {
   const dgTts = deepgram.speak.live({
     model: 'aura-2-andromeda-en',
     encoding: 'mulaw',
     sample_rate: 8000
   });
+
   dgTts.on(LiveTTSEvents.Open, () => {
     dgTts.sendText(text);
     dgTts.flush();
   });
+
   dgTts.on(LiveTTSEvents.Audio, (chunk) => {
     ws.send(JSON.stringify({
       event: 'media',
@@ -105,18 +138,22 @@ function speak(ws, streamSid, text) {
       media: { payload: Buffer.from(chunk).toString('base64') }
     }));
   });
+
   dgTts.on(LiveTTSEvents.Flushed, () => {
     ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
     ttsInFlight = false;
-    // no dgTts.close()
   });
-  dgTts.on(LiveTTSEvents.Error, () => {
+
+  dgTts.on(LiveTTSEvents.Error, (err) => {
+    console.error('Deepgram TTS error', err);
     ws.send(JSON.stringify({ event: 'clear', streamSid }));
     ttsInFlight = false;
   });
 }
 
-// OAuth2 for Calendar
+// —————————
+// 3) OAuth2 endpoints for Google Calendar
+// —————————
 app.get('/auth', (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -125,20 +162,24 @@ app.get('/auth', (req, res) => {
   });
   res.redirect(url);
 });
+
 app.get('/oauth2callback', async (req, res) => {
   try {
     const { tokens } = await oauth2Client.getToken(req.query.code);
-    console.log('Calendar tokens:', tokens);
-    res.send('OAuth complete.');
-  } catch {
-    res.status(500).send('OAuth failed.');
+    console.log('Received tokens:', tokens);
+    res.send('OAuth complete. You can close this window.');
+  } catch (e) {
+    console.error('OAuth error', e);
+    res.status(500).send('OAuth failed');
   }
 });
 
-// Healthchecks
-app.get('/', (_, res) => res.send('SmartVoiceAI running'));
+// —————————
+// Health & test endpoints
+// —————————
+app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
 app.get('/health', (_, res) => res.json({ status: 'ok' }));
 
-// Start
+// Start HTTP + WS server
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server listening on ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));

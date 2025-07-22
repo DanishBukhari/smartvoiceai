@@ -81,47 +81,40 @@ async function handleInput(input, confidence = 1.0) {
   stateMachine.conversationHistory.push({ role: 'user', content: input });
   let response;
 
-  try {
-    switch (stateMachine.currentState) {
-      case 'start':
-        response = await handleStart(input);
-        break;
-      case 'toilet':
-      case 'hot water system':
-      case 'burst/leak':
-      case 'rain-pump':
-      case 'roof leak':
-      case 'new install/quote':
-      case 'other':
-        response = await askNextQuestion(input);
-        break;
-      case 'ask_booking':
-        response = await askBooking(input);
-        break;
-      case 'collect_details':
-        response = await collectClientDetails(input);
-        break;
-      case 'book_appointment':
-        response = await handleAppointmentBooking(input);
-        break;
-      case 'confirm_slot':
-        response = await confirmSlot(input);
-        break;
-      case 'special_instructions':
-        response = await collectSpecialInstructions(input);
-        break;
-      default:
-        response = await getResponse(
-          `I’m a bit lost—could you clarify? You said: "${input}".`,
-          stateMachine.conversationHistory
-        );
-        stateMachine.currentState = 'general';
-    }
-  } catch {
-    response = await getResponse(
-      `Sorry, I ran into an error. Could you rephrase?`,
-      stateMachine.conversationHistory
-    );
+  switch (stateMachine.currentState) {
+    case 'start':
+      response = await handleStart(input);
+      break;
+    case 'toilet':
+    case 'hot water system':
+    case 'burst/leak':
+    case 'rain-pump':
+    case 'roof leak':
+    case 'new install/quote':
+    case 'other':
+      response = await askNextQuestion(input);
+      break;
+    case 'ask_booking':
+      response = await askBooking(input);
+      break;
+    case 'collect_details':
+      response = await collectClientDetails(input);
+      break;
+    case 'book_appointment':
+      response = await handleAppointmentBooking(input);
+      break;
+    case 'confirm_slot':
+      response = await confirmSlot(input);
+      break;
+    case 'special_instructions':
+      response = await collectSpecialInstructions(input);
+      break;
+    default:
+      response = await getResponse(
+        `I’m a bit lost—could you clarify? You said: "${input}".`,
+        stateMachine.conversationHistory
+      );
+      stateMachine.currentState = 'general';
   }
 
   return response;
@@ -129,7 +122,7 @@ async function handleInput(input, confidence = 1.0) {
 
 async function handleStart(input) {
   const lower = input.toLowerCase();
-  const fast = {
+  const fastMap = {
     toilet: 'toilet',
     'hot water': 'hot water system',
     water: 'hot water system',
@@ -138,21 +131,23 @@ async function handleStart(input) {
     roof: 'roof leak',
     quote: 'new install/quote'
   };
-  for (const key of Object.keys(fast)) {
+  for (const key of Object.keys(fastMap)) {
     if (lower.includes(key)) {
-      stateMachine.issueType = fast[key];
-      stateMachine.currentState = fast[key];
+      const state = fastMap[key];
+      stateMachine.issueType = state;
+      stateMachine.currentState = state;
       stateMachine.questionIndex = 0;
-      return issueQuestions[fast[key]][0];
+      return issueQuestions[state][0];
     }
   }
 
   const prompt = `
-Analyze this customer query and choose one category: toilet, hot water system, burst/leak, rain-pump, roof leak, new install/quote, or other.
+Analyze this customer query and choose one category:
+toilet, hot water system, burst/leak, rain-pump, roof leak, new install/quote, or other.
 Customer: "${input}"
-Return only the category name.
-`;
+Return only the category name.`;
   const category = (await getResponse(prompt)).trim().toLowerCase();
+
   if (issueQuestions[category]) {
     stateMachine.issueType = category;
     stateMachine.currentState = category;
@@ -174,7 +169,6 @@ async function askNextQuestion(input) {
     stateMachine.questionIndex++;
     return qs[stateMachine.questionIndex];
   }
-
   stateMachine.currentState = 'ask_booking';
   return stateMachine.clientData.urgent
     ? "This sounds urgent. Shall I book an emergency appointment for you?"
@@ -214,12 +208,10 @@ async function handleAppointmentBooking(input) {
   const nowBris = new Date(
     new Date().toLocaleString('en-US', { timeZone: 'Australia/Brisbane' })
   );
-  const todayStart = new Date(nowBris.setHours(7, 0, 0, 0));
-  const todayEnd   = new Date(nowBris.setHours(19, 0, 0, 0));
-  let earliest = nowBris > todayStart ? nowBris : todayStart;
-  if (nowBris > todayEnd) {
-    earliest = new Date(todayStart.getTime() + 24 * 3600 * 1000);
-  }
+  const morning = new Date(nowBris.setHours(7, 0, 0, 0));
+  const evening = new Date(nowBris.setHours(19, 0, 0, 0));
+  let earliest = nowBris > morning ? nowBris : morning;
+  if (nowBris > evening) earliest = new Date(morning.getTime() + 86400000);
 
   const last = await getLastAppointment(token, new Date());
   if (last) {
@@ -238,9 +230,8 @@ async function handleAppointmentBooking(input) {
     slot = await getNextAvailableSlot(token, earliest);
   } else {
     const parsePrompt = `
-Extract an ISO datetime in Brisbane time from: "${input}". 
-Return "invalid" if you can't.
-`;
+Extract an ISO datetime in Brisbane time from: "${input}".
+Return "invalid" if you can't.`;
     const iso = await getResponse(parsePrompt);
     if (iso === 'invalid') {
       return "Sorry, I didn't understand that time. When would you like the appointment?";
@@ -289,6 +280,7 @@ async function collectSpecialInstructions(input) {
       customField: { specialInstructions: input || 'None' }
     });
   } catch {}
+
   try {
     const token = await getAccessToken();
     const start = stateMachine.nextSlot.toISOString();
