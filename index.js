@@ -5,11 +5,8 @@ const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const twilio = require('twilio');
 const WebSocket = require('ws');
-const {
-  createClient,
-  LiveTranscriptionEvents,
-  LiveTTSEvents
-} = require('@deepgram/sdk');
+const { Deepgram } = require('@deepgram/sdk');
+const { LiveTranscriptionEvents, LiveTTSEvents } = require('@deepgram/sdk');
 const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
@@ -19,7 +16,7 @@ const { OAuth2Client } = require('google-auth-library');
 const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server, path: '/media' });  // scope to /media
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.enable('trust proxy');
