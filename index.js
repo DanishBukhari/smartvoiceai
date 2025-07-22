@@ -187,7 +187,7 @@ async function sendTTS(ws, streamSid, text) {
       // ttsConnection.resume();       
 
       ttsConnection.sendText(text);
-      ttsConnection.flush();
+      // ttsConnection.flush();
     });
 
     ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
