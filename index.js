@@ -6,25 +6,22 @@ const WebSocket = require('ws');
 const { createClient, LiveTranscriptionEvents, LiveTTSEvents } = require('@deepgram/sdk');
 const { handleInput, stateMachine } = require('./flow');
 const { OAuth2Client } = require('google-auth-library');
-const path = require('path');
 
 const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-
-// Google OAuth2 client (for Calendar)
 const oauth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
   `https://${process.env.HEROKU_APP}.herokuapp.com/oauth2callback`
 );
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static('public'));
 app.use(express.urlencoded({ extended: true }));
 
-// ————— Twilio voice webhook —————
+// — Twilio → start streaming voice frames to /media
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
   const conn = twiml.connect();
@@ -33,27 +30,24 @@ app.post('/voice', (req, res) => {
   res.type('text/xml').send(twiml.toString());
 });
 
-// ————— WebSocket for media —————
 wss.on('connection', (ws) => {
   let streamSid;
-  let isSpeaking = false;
   let sttReady = false;
   let ttsInFlight = false;
+  let greetingSent = false;
 
-  // Reset stateMachine
+  // Reset state
   Object.assign(stateMachine, {
     currentState: 'start',
+    questionIndex: 0,
     conversationHistory: [],
     clientData: {},
     issueType: null,
-    questionIndex: 0,
     nextSlot: null,
-    awaitingAddress: false,
-    awaitingTime: false,
     bookingRetryCount: 0
   });
 
-  // STT stream
+  // Setup STT listener
   const dgStt = deepgram.listen.live({
     model: 'nova-2',
     language: 'en-AU',
@@ -63,70 +57,38 @@ wss.on('connection', (ws) => {
     encoding: 'mulaw',
     sample_rate: 8000
   });
-
   dgStt.on(LiveTranscriptionEvents.Open, () => sttReady = true);
   dgStt.on(LiveTranscriptionEvents.Transcript, async (data) => {
-    const alt = data.channel.alternatives[0];
-    if (data.is_final && alt.transcript && !isSpeaking) {
-      const reply = await handleInput(alt.transcript);
-      // TTS reply
-      if (ttsInFlight) return;
-      ttsInFlight = true;
-
-      const dgTts = deepgram.speak.live({
-        model: 'aura-2-andromeda-en',
-        encoding: 'mulaw',
-        sample_rate: 8000
-      });
-
-      dgTts.on(LiveTTSEvents.Open, () => {
-        dgTts.sendText(reply);
-        dgTts.flush();
-      });
-      dgTts.on(LiveTTSEvents.Audio, (chunk) => {
-        ws.send(JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: Buffer.from(chunk).toString('base64') }
-        }));
-      });
-      dgTts.on(LiveTTSEvents.Flushed, () => {
-        ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
-        ttsInFlight = false;
-        dgTts.close();
-      });
-      dgTts.on(LiveTTSEvents.Error, () => {
-        ws.send(JSON.stringify({ event: 'clear', streamSid }));
-        ttsInFlight = false;
-        dgTts.close();
-      });
-    }
+    if (!data.is_final) return;
+    const text = data.channel.alternatives[0].transcript;
+    if (!text || ttsInFlight) return;
+    const reply = await handleInput(text);
+    ttsInFlight = true;
+    speak(ws, streamSid, reply);
   });
 
-  // Twilio media events
   ws.on('message', (raw) => {
     const msg = JSON.parse(raw);
-    switch (msg.event) {
-      case 'start':
-        streamSid = msg.streamSid;
-        sendTTS(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
-        break;
-      case 'media':
-        if (sttReady && !isSpeaking) {
-          dgStt.send(Buffer.from(msg.media.payload, 'base64'));
-        }
-        break;
-      case 'stop':
-        dgStt.finish();
-        break;
+    if (msg.event === 'start') {
+      streamSid = msg.streamSid;
+      if (!greetingSent) {
+        greetingSent = true;
+        speak(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
+      }
+    }
+    if (msg.event === 'media' && sttReady) {
+      const audio = Buffer.from(msg.media.payload, 'base64');
+      dgStt.send(audio);
+    }
+    if (msg.event === 'stop') {
+      dgStt.finish();
     }
   });
 
   ws.on('close', () => dgStt.finish());
 });
 
-// ————— Helper: one‑off TTS send —————
-async function sendTTS(ws, streamSid, text) {
+function speak(ws, streamSid, text) {
   const dgTts = deepgram.speak.live({
     model: 'aura-2-andromeda-en',
     encoding: 'mulaw',
@@ -145,27 +107,16 @@ async function sendTTS(ws, streamSid, text) {
   });
   dgTts.on(LiveTTSEvents.Flushed, () => {
     ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
-    dgTts.close();
+    ttsInFlight = false;
+    // no dgTts.close()
   });
   dgTts.on(LiveTTSEvents.Error, () => {
     ws.send(JSON.stringify({ event: 'clear', streamSid }));
-    dgTts.close();
+    ttsInFlight = false;
   });
 }
 
-// ————— OAuth2 callback —————
-app.get('/oauth2callback', async (req, res) => {
-  const code = req.query.code;
-  if (!code) return res.status(400).send('No code provided');
-  try {
-    const { tokens } = await oauth2Client.getToken(code);
-    console.log('Got tokens', tokens);
-    res.send('OAuth complete.');
-  } catch (e) {
-    res.status(500).send('Error exchanging code');
-  }
-});
-
+// OAuth2 for Calendar
 app.get('/auth', (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -174,12 +125,20 @@ app.get('/auth', (req, res) => {
   });
   res.redirect(url);
 });
+app.get('/oauth2callback', async (req, res) => {
+  try {
+    const { tokens } = await oauth2Client.getToken(req.query.code);
+    console.log('Calendar tokens:', tokens);
+    res.send('OAuth complete.');
+  } catch {
+    res.status(500).send('OAuth failed.');
+  }
+});
 
-// ————— Health / test endpoints —————
-app.get('/test', (_, res) => res.json({ status:'OK', time: new Date().toISOString() }));
-app.get('/',    (_, res) => res.send('SmartVoiceAI is running.'));
-app.get('/health', (_, res) => res.json({ status:'ok' }));
+// Healthchecks
+app.get('/', (_, res) => res.send('SmartVoiceAI running'));
+app.get('/health', (_, res) => res.json({ status: 'ok' }));
 
-// ————— Start server —————
-const port = process.env.PORT || 3000;
-server.listen(port, () => console.log(`Server up on ${port}`));
+// Start
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🚀 Server listening on ${PORT}`));
