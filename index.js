@@ -190,12 +190,12 @@ async function sendTTS(ws, streamSid, text) {
     });
     dgTts.on(LiveTTSEvents.Flushed, () => {
       ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
-      dgTts.close(); // close after flush
+      // dgTts.close(); // close after flush
     });
     dgTts.on(LiveTTSEvents.Error, (err) => {
       console.error('sendTTS error', err);
       ws.send(JSON.stringify({ event: 'clear', streamSid }));
-      dgTts.close();
+      // dgTts.close();
     });
   } catch (err) {
     console.error('sendTTS threw', err);
