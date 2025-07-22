@@ -4,7 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const WebSocket = require('ws');
-const { Deepgram, LiveTranscriptionEvents, LiveTTSEvents } = require('@deepgram/sdk');  // <-- v2 import
+const { Deepgram } = require('@deepgram/sdk');      // v2 SDK
 const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
@@ -37,7 +37,6 @@ app.post('/voice', (req, res) => {
     name: 'voiceStream',
   });
   twiml.pause({ length: 1 });  // Small pause to ensure stream is ready
-
   res.type('text/xml').send(twiml.toString());
 });
 
@@ -73,15 +72,13 @@ wss.on('connection', (ws) => {
     sample_rate: 8000,
   });
 
-  dgConnection.on(LiveTranscriptionEvents.Open, () => {
+  dgConnection.on('open', () => {
     console.log('Deepgram STT connected');
     sttReady = true;
   });
-  dgConnection.on(LiveTranscriptionEvents.Error, (error) =>
-    console.error('Deepgram STT error', error)
-  );
+  dgConnection.on('error', (error) => console.error('Deepgram STT error', error));
 
-  dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
+  dgConnection.on('transcript', async (data) => {
     const transcript = data.channel.alternatives[0].transcript;
     if (transcript.length > 0 && data.is_final) {
       console.log('STT Transcript:', transcript);
@@ -95,45 +92,39 @@ wss.on('connection', (ws) => {
         sample_rate: 8000,
       });
 
-      ttsConnection.on(LiveTTSEvents.Open, () => {
+      ttsConnection.on('open', () => {
         console.log('Deepgram TTS connected');
         ttsConnection.sendText(reply);
         ttsConnection.flush();
       });
 
-      ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+      ttsConnection.on('audio', (audioChunk) => {
         console.log('Sending TTS audio chunk', audioChunk.length);
         const base64Chunk = Buffer.from(audioChunk).toString('base64');
-        ws.send(
-          JSON.stringify({
-            event: 'media',
-            streamSid,
-            media: { payload: base64Chunk },
-          })
-        );
+        ws.send(JSON.stringify({
+          event: 'media',
+          streamSid,
+          media: { payload: base64Chunk }
+        }));
       });
 
-      ttsConnection.on(LiveTTSEvents.Flushed, () => {
+      ttsConnection.on('flushed', () => {
         console.log('TTS flushed');
-        ws.send(
-          JSON.stringify({
-            event: 'mark',
-            streamSid,
-            mark: { name: 'endOfResponse' },
-          })
-        );
+        ws.send(JSON.stringify({
+          event: 'mark',
+          streamSid,
+          mark: { name: 'endOfResponse' }
+        }));
         isSpeaking = false;
         ttsConnection.close();
       });
 
-      ttsConnection.on(LiveTTSEvents.Error, (err) => {
+      ttsConnection.on('error', (err) => {
         console.error('Deepgram TTS error:', err);
-        ws.send(
-          JSON.stringify({
-            event: 'clear',
-            streamSid,
-          })
-        );
+        ws.send(JSON.stringify({
+          event: 'clear',
+          streamSid
+        }));
         isSpeaking = false;
         ttsConnection.close();
       });
@@ -152,11 +143,7 @@ wss.on('connection', (ws) => {
         streamSid = msg.streamSid;
         console.log('Stream started, Sid:', streamSid);
         // Send initial greeting when stream starts
-        sendTTS(
-          ws,
-          streamSid,
-          'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?'
-        );
+        sendTTS(ws, streamSid, "Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
         break;
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
@@ -187,42 +174,36 @@ async function sendTTS(ws, streamSid, text) {
       sample_rate: 8000,
     });
 
-    ttsConnection.on(LiveTTSEvents.Open, () => {
+    ttsConnection.on('open', () => {
       console.log('Deepgram TTS connected');
       ttsConnection.sendText(text);
       ttsConnection.flush();
     });
 
-    ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+    ttsConnection.on('audio', (audioChunk) => {
       const base64Chunk = Buffer.from(audioChunk).toString('base64');
-      ws.send(
-        JSON.stringify({
-          event: 'media',
-          streamSid,
-          media: { payload: base64Chunk },
-        })
-      );
+      ws.send(JSON.stringify({
+        event: 'media',
+        streamSid,
+        media: { payload: base64Chunk }
+      }));
     });
 
-    ttsConnection.on(LiveTTSEvents.Flushed, () => {
-      ws.send(
-        JSON.stringify({
-          event: 'mark',
-          streamSid,
-          mark: { name: 'endOfResponse' },
-        })
-      );
+    ttsConnection.on('flushed', () => {
+      ws.send(JSON.stringify({
+        event: 'mark',
+        streamSid,
+        mark: { name: 'endOfResponse' }
+      }));
       ttsConnection.close();
     });
 
-    ttsConnection.on(LiveTTSEvents.Error, (err) => {
+    ttsConnection.on('error', (err) => {
       console.error('Initial TTS error:', err);
-      ws.send(
-        JSON.stringify({
-          event: 'clear',
-          streamSid,
-        })
-      );
+      ws.send(JSON.stringify({
+        event: 'clear',
+        streamSid
+      }));
       ttsConnection.close();
     });
   } catch (error) {
@@ -252,7 +233,7 @@ app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
 // TTS test endpoint
 app.get('/test-tts', async (req, res) => {
   try {
-    const testText = req.query.text || 'Hello, this is a test.';
+    const testText = req.query.text || "Hello, this is a test.";
     console.log('Testing TTS with text:', testText);
     const { result, error } = await deepgram.speak.speak(
       { text: testText },
@@ -272,16 +253,12 @@ app.get('/test-tts', async (req, res) => {
 });
 
 // Health endpoint
-app.get('/health', (_, res) => {
-  res.json({ status: 'ok', responseTime: 0 });
-});
+app.get('/health', (_, res) => res.json({ status: 'ok', responseTime: 0 }));
 
 // Global error handler
 app.use((err, _, res, next) => {
   console.error('Unhandled error:', err);
-  if (!res.headersSent) {
-    res.status(500).send('Server error');
-  }
+  if (!res.headersSent) res.status(500).send('Server error');
 });
 
 // OAuth2 callback for Google Calendar
@@ -302,16 +279,12 @@ app.get('/auth', (req, res) => {
 
 app.get('/oauth2callback', async (req, res) => {
   const code = req.query.code;
-  if (!code) {
-    return res.status(400).send('No code provided');
-  }
+  if (!code) return res.status(400).send('No code provided');
   try {
     const { tokens } = await oauth2Client.getToken(code);
     console.log('Access Token:', tokens.access_token);
     console.log('Refresh Token:', tokens.refresh_token);
-    res.send(
-      `OAuth complete. Refresh Token: ${tokens.refresh_token}. Copy this to your .env GOOGLE_REFRESH_TOKEN.`
-    );
+    res.send(`OAuth complete. Refresh Token: ${tokens.refresh_token}. Copy this to your .env GOOGLE_REFRESH_TOKEN.`);
   } catch (error) {
     console.error('OAuth callback error:', error);
     res.status(500).send('Error exchanging code for tokens');
@@ -320,6 +293,4 @@ app.get('/oauth2callback', async (req, res) => {
 
 // Start server
 const port = process.env.PORT || 3000;
-server.listen(port, () => {
-  console.log(`🚀 Server started on ${port}`);
-});
+server.listen(port, () => console.log(`🚀 Server started on ${port}`));
