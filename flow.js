@@ -207,10 +207,10 @@ async function learnFromInput(input) {
   try {
     // Clean the response to extract just the JSON
     let jsonStr = analysis.trim();
-    if (jsonStr.includes('```json')) {
-      jsonStr = jsonStr.split('```json')
-    } else if (jsonStr.includes('```')) {
-      jsonStr = jsonStr.split('```')[1].split('```')[0].trim();
+    if (jsonStr.includes('json')) {
+      jsonStr = jsonStr.split('json')
+    } else if (jsonStr.includes('')) {
+      jsonStr = jsonStr.split('')[1].split('')[0].trim();
     }
     
     const insights = JSON.parse(jsonStr);

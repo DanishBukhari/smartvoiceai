@@ -112,7 +112,7 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
-            ttsConnection.finish();
+          
           });
 
           ttsConnection.on(LiveTTSEvents.Error, (err) => {
@@ -202,7 +202,7 @@ async function sendTTS(ws, streamSid, text) {
           name: 'endOfResponse'
         }
       }));
-      ttsConnection.finish();
+      
     });
 
     ttsConnection.on(LiveTTSEvents.Error, (err) => {
@@ -284,15 +284,6 @@ const oauth2Client = new OAuth2Client(
   'https://smartvoiceai-fa77bfa7f137.herokuapp.com/oauth2callback'  // Your Heroku URL
 );
 
-app.get('/auth', (req, res) => {
-  const authorizeUrl = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/calendar'],
-    prompt: 'consent',
-  });
-  res.redirect(authorizeUrl);
-});
-
 app.get('/oauth2callback', async (req, res) => {
   const code = req.query.code;
   if (code) {
@@ -308,6 +299,15 @@ app.get('/oauth2callback', async (req, res) => {
   } else {
     res.status(400).send('No code provided');
   }
+});
+
+app.get('/auth', (req, res) => {
+  const authorizeUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/calendar'],
+    prompt: 'consent',
+  });
+  res.redirect(authorizeUrl);
 });
 
 // Start server
