@@ -82,7 +82,7 @@ wss.on('connection', (ws) => {
         // Generate TTS with Deepgram (v3 syntax)
         try {
           const ttsConnection = deepgram.speak.live({
-            model: 'aura-andromeda-en',
+            model: 'aura-2-andromeda-en',
             encoding: 'mulaw',
             sample_rate: 8000,
           });
@@ -126,7 +126,7 @@ wss.on('connection', (ws) => {
               streamSid: streamSid
             }));
             isSpeaking = false;
-            ttsConnection.Close();
+            // ttsConnection.close();
           });
 
           isSpeaking = true;
@@ -177,7 +177,7 @@ wss.on('connection', (ws) => {
 async function sendTTS(ws, streamSid, text) {
   try {
     const ttsConnection = deepgram.speak.live({
-      model: 'aura-andromeda-en',
+      model: 'aura-2-andromeda-en',
       encoding: 'mulaw',
       sample_rate: 8000,
     });
@@ -220,7 +220,7 @@ async function sendTTS(ws, streamSid, text) {
         event: 'clear',
         streamSid: streamSid
       }));
-      ttsConnection.Close();
+      // ttsConnection.close();
     });
   } catch (error) {
     console.error('Initial TTS error:', error);
