@@ -24,7 +24,8 @@
   "description": "Smart Voice AI for plumbing business with Twilio, OpenAI, ElevenLabs, and Microsoft Outlook integration",
   "dependencies": {
     "@azure/msal-node": "^2.16.2",
-    "@deepgram/sdk": "^4.9.1",
+        "@deepgram/sdk": "^2.4.0",
+
     "@elevenlabs/elevenlabs-js": "^2.3.0",
     "axios": "^1.9.0",
     "deepgram": "^1.0.3",
