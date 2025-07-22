@@ -149,7 +149,7 @@ wss.on('connection', (ws) => {
         break;
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
-        console.log('Received media chunk', audioData.length);
+        // console.log('Received media chunk', audioData.length);
         mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
         if (!isSpeaking && sttReady) {
           dgConnection.send(audioData);
