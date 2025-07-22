@@ -82,13 +82,13 @@ wss.on('connection', (ws) => {
         // Generate TTS with Deepgram (v3 syntax)
         try {
           const ttsConnection = deepgram.speak.live({
-            model: 'aura-asteria-en',
+            model: 'aura-2-andromeda-en',
             encoding: 'mulaw',
             sample_rate: 8000,
           });
 
           ttsConnection.on(LiveTTSEvents.Open, () => {
-            isSpeaking=ture
+            isSpeaking = ture
             // ttsConnection.pause();
             ttsConnection.sendText(reply);
             ttsConnection.flush();
@@ -177,7 +177,7 @@ wss.on('connection', (ws) => {
 async function sendTTS(ws, streamSid, text) {
   try {
     const ttsConnection = deepgram.speak.live({
-      model: 'aura-asteria-en',
+      model: 'aura-2-andromeda-en',
       encoding: 'mulaw',
       sample_rate: 8000,
     });
@@ -187,7 +187,7 @@ async function sendTTS(ws, streamSid, text) {
       // ttsConnection.resume();       
 
       ttsConnection.sendText(text);
-      // ttsConnection.flush();
+      ttsConnection.flush();
     });
 
     ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
@@ -210,7 +210,7 @@ async function sendTTS(ws, streamSid, text) {
           name: 'endOfResponse'
         }
       }));
-      isSpeaking=false;
+      isSpeaking = false;
       
     });
 
