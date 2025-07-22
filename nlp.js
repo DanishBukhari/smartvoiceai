@@ -1,4 +1,5 @@
-// the help of tha ai for ready scenarios,, //nlp.js
+
+// nlp.js
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
@@ -8,7 +9,10 @@ const openai = new OpenAI({
 // Add caching for NLP responses
 const nlpCache = new Map();
 
-const systemPrompt = `You are Robyn, a friendly, energetic voice agent for Usher Fix Plumbing in Australia. 
+const BRISBANE_TZ = 'Australia/Brisbane';
+const currentDate = new Date().toLocaleDateString('en-US', { timeZone: BRISBANE_TZ, weekday: 'long', month: 'long', day: 'numeric' });
+
+const systemPrompt = `You are Robyn, a friendly, energetic voice agent for Usher Fix Plumbing in Australia. Today's date is ${currentDate} Brisbane time.
 
 CORE CAPABILITIES:
 - Understand and categorize plumbing issues accurately

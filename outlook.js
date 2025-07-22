@@ -1,3 +1,4 @@
+// google_calendar.js
 const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 
@@ -11,9 +12,9 @@ const calendarId = process.env.GOOGLE_CALENDAR_ID || 'primary';
 
 async function getAccessToken() {
   try {
-    await oauth2Client.getAccessToken();
+    const { token } = await oauth2Client.getAccessToken();
     console.log('Google Access Token acquired');
-    return oauth2Client.credentials.access_token;
+    return token;
   } catch (error) {
     console.error('getAccessToken: Authentication error', error.message, error.stack);
     return null;
@@ -54,7 +55,6 @@ async function getNextAvailableSlot(accessToken, afterDate) {
     if (busy.length === 0) {
       return afterDate;
     }
-    // Find first free slot after busy periods
     let currentTime = afterDate;
     for (const interval of busy) {
       const intervalStart = new Date(interval.start);
@@ -102,3 +102,4 @@ async function createAppointment(accessToken, eventDetails) {
 }
 
 module.exports = { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment };
+
