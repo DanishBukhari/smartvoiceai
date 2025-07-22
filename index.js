@@ -1,4 +1,4 @@
-// index.js – Deepgram v3 STT/TTS + Twilio + flow.js + Google OAuth + health checks
+// index.js – Deepgram v3 STT & TTS + Twilio + flow.js + OpenAI + Google OAuth
 
 require('dotenv').config();
 const express = require('express');
@@ -11,7 +11,7 @@ const path = require('path');
 const fs = require('fs');
 const { OAuth2Client } = require('google-auth-library');
 
-// Express & Twilio setup
+// Express setup
 const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
@@ -19,21 +19,21 @@ app.enable('trust proxy');
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.urlencoded({ extended: true }));
 
-// Deepgram v3 client
+// Deepgram v3 client
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
 // OpenAI client
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// OAuth for Google Calendar
+// Google OAuth2 client (for Calendar)
 const oauth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
   'https://YOUR_HEROKU_APP.herokuapp.com/oauth2callback'
 );
 
-// --------------
-// /voice endpoint – Twilio starts media WebSocket
-// --------------
+// —————————
+// 1) Twilio /voice endpoint → start media stream
+// —————————
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
   const connect = twiml.connect();
@@ -45,17 +45,16 @@ app.post('/voice', (req, res) => {
   res.type('text/xml').send(twiml.toString());
 });
 
-// --------------
-// WebSocket for Twilio Media Stream
-// --------------
+// —————————
+// 2) WebSocket handler for Twilio media
+// —————————
 wss.on('connection', (ws) => {
   console.log('New WebSocket connection');
-
   let streamSid;
   let isSpeaking = false;
   let sttReady = false;
 
-  // Reset flow state
+  // Reset your conversation state
   Object.assign(stateMachine, {
     currentState: 'start',
     conversationHistory: [],
@@ -65,9 +64,9 @@ wss.on('connection', (ws) => {
     nextSlot: null,
   });
 
-  // —— STREAMING STT with Deepgram v3 ——
+  // —— Deepgram streaming STT ——
   const dgStt = deepgram.listen.live({
-    model: 'nova-2',           // adjust model & language
+    model: 'nova-2',
     language: 'en-AU',
     smart_format: true,
     filler_words: false,
@@ -86,15 +85,16 @@ wss.on('connection', (ws) => {
     console.error('Deepgram STT error', err);
   });
   dgStt.on(LiveTranscriptionEvents.Transcript, async (data) => {
+    // only handle final transcripts
     const alt = data.channel.alternatives[0];
     if (alt.transcript && data.is_final) {
       console.log('STT Transcript:', alt.transcript);
       const reply = await handleInput(alt.transcript);
       console.log('NLP Reply:', reply);
 
-      // —— STREAMING TTS with Deepgram v3 ——
+      // —— Deepgram streaming TTS ——
       const dgTts = deepgram.speak.live({
-        model: 'aura-2-andromeda-en',  // adjust your voice model
+        model: 'aura-2-andromeda-en',
         encoding: 'mulaw',
         sample_rate: 8000,
       });
@@ -103,8 +103,8 @@ wss.on('connection', (ws) => {
         dgTts.sendText(reply);
         dgTts.flush();
       });
-      dgTts.on(LiveTTSEvents.Audio, (audioChunk) => {
-        const payload = Buffer.from(audioChunk).toString('base64');
+      dgTts.on(LiveTTSEvents.Audio, (chunk) => {
+        const payload = Buffer.from(chunk).toString('base64');
         ws.send(JSON.stringify({
           event: 'media',
           streamSid,
@@ -112,41 +112,41 @@ wss.on('connection', (ws) => {
         }));
       });
       dgTts.on(LiveTTSEvents.Flushed, () => {
+        // signal end of response
         ws.send(JSON.stringify({
           event: 'mark',
           streamSid,
           mark: { name: 'endOfResponse' }
         }));
         isSpeaking = false;
-        dgTts.close();
+        // no explicit close() needed
       });
       dgTts.on(LiveTTSEvents.Error, (err) => {
         console.error('Deepgram TTS error', err);
         ws.send(JSON.stringify({ event: 'clear', streamSid }));
         isSpeaking = false;
-        dgTts.close();
       });
 
       isSpeaking = true;
     }
   });
 
-  // —— Handle incoming Twilio media frames ——  
-  ws.on('message', (msg) => {
-    const event = JSON.parse(msg);
-    switch (event.event) {
+  // —— Twilio media frames in
+  ws.on('message', (raw) => {
+    const msg = JSON.parse(raw);
+    switch (msg.event) {
       case 'connected':
         console.log('Twilio stream connected');
         break;
       case 'start':
-        streamSid = event.streamSid;
+        streamSid = msg.streamSid;
         console.log('Stream started:', streamSid);
-        // send initial TTS greeting
+        // send your own TTS greeting
         sendTTS(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
         break;
       case 'media':
         if (sttReady && !isSpeaking) {
-          const audio = Buffer.from(event.media.payload, 'base64');
+          const audio = Buffer.from(msg.media.payload, 'base64');
           dgStt.send(audio);
         }
         break;
@@ -163,9 +163,9 @@ wss.on('connection', (ws) => {
   });
 });
 
-// --------------
-// sendTTS helper uses the same v3 TTS path
-// --------------
+// —————————
+// Helper: send TTS greeting or any text
+// —————————
 async function sendTTS(ws, streamSid, text) {
   try {
     const dgTts = deepgram.speak.live({
@@ -177,27 +177,27 @@ async function sendTTS(ws, streamSid, text) {
       dgTts.sendText(text);
       dgTts.flush();
     });
-    dgTts.on(LiveTTSEvents.Audio, (audioChunk) => {
-      const payload = Buffer.from(audioChunk).toString('base64');
+    dgTts.on(LiveTTSEvents.Audio, (chunk) => {
+      const payload = Buffer.from(chunk).toString('base64');
       ws.send(JSON.stringify({ event: 'media', streamSid, media: { payload } }));
     });
     dgTts.on(LiveTTSEvents.Flushed, () => {
       ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
-      dgTts.close();
     });
     dgTts.on(LiveTTSEvents.Error, (err) => {
       console.error('sendTTS error', err);
       ws.send(JSON.stringify({ event: 'clear', streamSid }));
-      dgTts.close();
     });
   } catch (err) {
     console.error('sendTTS threw', err);
   }
 }
 
-// --------------
-// Other endpoints: health, test‑tts, OAuth, etc.
-// --------------
+// —————————
+// Misc endpoints
+// —————————
+
+// Health + debug
 app.get('/test', (_, res) => {
   res.json({
     status: 'OK',
@@ -213,28 +213,31 @@ app.get('/test', (_, res) => {
   });
 });
 
+// Root
 app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
 
+// on‑demand TTS (not streaming)
 app.get('/test-tts', async (req, res) => {
   try {
-    const text = req.query.text || 'Hello, this is a test.';
-    const dgTts = deepgram.speak();
-    const { audio } = await dgTts.speech({ text }, { model: 'aura-2-andromeda-en' });
-    res.set('Content-Type', 'audio/wav').send(audio);
+    const text = req.query.text || 'Hello, test.';
+    const { audio } = await deepgram.speak.text({ text }, { model: 'aura-2-andromeda-en' });
+    res.set('Content-Type', 'audio/wav').send(Buffer.from(audio, 'base64'));
   } catch (err) {
     console.error('test-tts error', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// Simple health check
 app.get('/health', (_, res) => res.json({ status: 'ok', responseTime: 0 }));
 
+// Global error handler
 app.use((err, _, res, next) => {
   console.error('Unhandled error:', err);
   if (!res.headersSent) res.status(500).send('Server error');
 });
 
-// Google OAuth for Calendar
+// Google OAuth2 for Calendar
 app.get('/auth', (req, res) => {
   const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
@@ -248,8 +251,8 @@ app.get('/oauth2callback', async (req, res) => {
   if (!code) return res.status(400).send('No code provided');
   try {
     const { tokens } = await oauth2Client.getToken(code);
-    console.log('Access Token:', tokens.access_token);
-    console.log('Refresh Token:', tokens.refresh_token);
+    console.log('Access:', tokens.access_token);
+    console.log('Refresh:', tokens.refresh_token);
     res.send(`OAuth complete. Refresh Token: ${tokens.refresh_token}`);
   } catch (e) {
     console.error('OAuth error', e);
@@ -257,6 +260,6 @@ app.get('/oauth2callback', async (req, res) => {
   }
 });
 
-// Start server
+// Start HTTP+WS server
 const port = process.env.PORT || 3000;
 server.listen(port, () => console.log(`🚀 Server started on ${port}`));
