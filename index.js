@@ -65,15 +65,16 @@ wss.on('connection', (ws) => {
     sample_rate:    8000,
   });
 
-  dgStt.addListener('open', () => {
+  dgStt.on('open', () => {
     console.log('Deepgram STT connected');
   });
-  dgStt.addListener('error', (err) => {
+  dgStt.on('error', (err) => {
     console.error('Deepgram STT error', err);
   });
-  dgStt.addListener('transcriptReceived', async (transcription) => {
-    const alt = transcription.data.channel.alternatives[0];
-    if (alt && alt.transcript && transcription.data.is_final) {
+  dgStt.on('transcriptionReceived', async (transcription) => {
+    // transcription is the raw JSON from DG: { channel: { alternatives: [...] }, is_final: bool, ... }
+    const alt = transcription.channel.alternatives[0];
+    if (alt && alt.transcript && transcription.is_final) {
       console.log('STT Transcript:', alt.transcript);
       const reply = await handleInput(alt.transcript);
       console.log('NLP Reply:', reply);
@@ -85,12 +86,12 @@ wss.on('connection', (ws) => {
         sample_rate: 8000,
       });
 
-      dgTts.addListener('open', () => {
+      dgTts.on('open', () => {
         console.log('Deepgram TTS connected');
         dgTts.sendText(reply);
         dgTts.flush();
       });
-      dgTts.addListener('audio', (audio) => {
+      dgTts.on('audio', (audio) => {
         console.log('Sending TTS chunk', audio.length);
         ws.send(JSON.stringify({
           event:    'media',
@@ -98,7 +99,7 @@ wss.on('connection', (ws) => {
           media: { payload: Buffer.from(audio).toString('base64') }
         }));
       });
-      dgTts.addListener('end', () => {
+      dgTts.on('end', () => {
         console.log('TTS stream end');
         ws.send(JSON.stringify({
           event:    'mark',
@@ -108,7 +109,7 @@ wss.on('connection', (ws) => {
         isSpeaking = false;
         dgTts.close();
       });
-      dgTts.addListener('error', (err) => {
+      dgTts.on('error', (err) => {
         console.error('Deepgram TTS error', err);
         ws.send(JSON.stringify({ event: 'clear', streamSid }));
         isSpeaking = false;
@@ -157,18 +158,18 @@ async function sendTTS(ws, streamSid, text) {
       encoding:    'mulaw',
       sample_rate: 8000,
     });
-    dgTts.addListener('open', () => {
+    dgTts.on('open', () => {
       dgTts.sendText(text);
       dgTts.flush();
     });
-    dgTts.addListener('audio', (audio) => {
+    dgTts.on('audio', (audio) => {
       ws.send(JSON.stringify({
         event:    'media',
         streamSid,
         media: { payload: Buffer.from(audio).toString('base64') }
       }));
     });
-    dgTts.addListener('end', () => {
+    dgTts.on('end', () => {
       ws.send(JSON.stringify({
         event:    'mark',
         streamSid,
@@ -176,7 +177,7 @@ async function sendTTS(ws, streamSid, text) {
       }));
       dgTts.close();
     });
-    dgTts.addListener('error', (err) => {
+    dgTts.on('error', (err) => {
       console.error('Initial TTS error', err);
       ws.send(JSON.stringify({ event: 'clear', streamSid }));
       dgTts.close();
@@ -207,12 +208,12 @@ app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
 app.get('/test-tts', async (req, res) => {
   try {
     const text = req.query.text || "Hello, this is a test.";
-    const result = await deepgram.tts.preRecorded(
+    const { audio } = await deepgram.tts.preRecorded(
       { text },
       { model: 'aura-2-andromeda-en', encoding: 'wav' }
     );
     res.set('Content-Type', 'audio/wav');
-    res.send(result.audio);
+    res.send(audio);
   } catch (err) {
     console.error('TTS test error', err);
     res.status(500).json({ error: err.message });
