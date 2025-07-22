@@ -1,5 +1,3 @@
-// index.js – Deepgram v3 STT & TTS + Twilio + flow.js + OpenAI + Google OAuth
-
 require('dotenv').config();
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
@@ -8,7 +6,6 @@ const { createClient, LiveTranscriptionEvents, LiveTTSEvents } = require('@deepg
 const { handleInput, stateMachine } = require('./flow');
 const { OpenAI } = require('openai');
 const path = require('path');
-const fs = require('fs');
 const { OAuth2Client } = require('google-auth-library');
 
 // Express setup
@@ -19,9 +16,9 @@ app.enable('trust proxy');
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.urlencoded({ extended: true }));
 
-// Deepgram v3 client
+// Deepgram client
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-// OpenAI client
+// OpenAI client (used inside flow.js)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Google OAuth2 client (for Calendar)
@@ -53,8 +50,9 @@ wss.on('connection', (ws) => {
   let streamSid;
   let isSpeaking = false;
   let sttReady = false;
+  let ttsInFlight = false; // <— throttle flag
 
-  // Reset your conversation state
+  // Reset stateMachine
   Object.assign(stateMachine, {
     currentState: 'start',
     conversationHistory: [],
@@ -62,6 +60,9 @@ wss.on('connection', (ws) => {
     issueType: null,
     questionIndex: 0,
     nextSlot: null,
+    awaitingAddress: false,
+    awaitingTime: false,
+    bookingRetryCount: 0,
   });
 
   // —— Deepgram streaming STT ——
@@ -85,7 +86,6 @@ wss.on('connection', (ws) => {
     console.error('Deepgram STT error', err);
   });
   dgStt.on(LiveTranscriptionEvents.Transcript, async (data) => {
-    // only handle final transcripts
     const alt = data.channel.alternatives[0];
     if (alt.transcript && data.is_final) {
       console.log('STT Transcript:', alt.transcript);
@@ -93,6 +93,12 @@ wss.on('connection', (ws) => {
       console.log('NLP Reply:', reply);
 
       // —— Deepgram streaming TTS ——
+      if (ttsInFlight) {
+        console.warn('TTS still in flight—dropping reply');
+        return;
+      }
+      ttsInFlight = true;
+
       const dgTts = deepgram.speak.live({
         model: 'aura-2-andromeda-en',
         encoding: 'mulaw',
@@ -112,26 +118,28 @@ wss.on('connection', (ws) => {
         }));
       });
       dgTts.on(LiveTTSEvents.Flushed, () => {
-        // signal end of response
         ws.send(JSON.stringify({
           event: 'mark',
           streamSid,
           mark: { name: 'endOfResponse' }
         }));
         isSpeaking = false;
-        // no explicit close() needed
+        dgTts.close();       // ensure this TTS socket closes
+        ttsInFlight = false; // ready for next TTS
       });
       dgTts.on(LiveTTSEvents.Error, (err) => {
         console.error('Deepgram TTS error', err);
         ws.send(JSON.stringify({ event: 'clear', streamSid }));
         isSpeaking = false;
+        dgTts.close();
+        ttsInFlight = false;
       });
 
       isSpeaking = true;
     }
   });
 
-  // —— Twilio media frames in
+  // —— Twilio media frames in ——
   ws.on('message', (raw) => {
     const msg = JSON.parse(raw);
     switch (msg.event) {
@@ -141,7 +149,6 @@ wss.on('connection', (ws) => {
       case 'start':
         streamSid = msg.streamSid;
         console.log('Stream started:', streamSid);
-        // send your own TTS greeting
         sendTTS(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
         break;
       case 'media':
@@ -183,10 +190,12 @@ async function sendTTS(ws, streamSid, text) {
     });
     dgTts.on(LiveTTSEvents.Flushed, () => {
       ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
+      dgTts.close(); // close after flush
     });
     dgTts.on(LiveTTSEvents.Error, (err) => {
       console.error('sendTTS error', err);
       ws.send(JSON.stringify({ event: 'clear', streamSid }));
+      dgTts.close();
     });
   } catch (err) {
     console.error('sendTTS threw', err);
@@ -196,27 +205,21 @@ async function sendTTS(ws, streamSid, text) {
 // —————————
 // Misc endpoints
 // —————————
-
-// Health + debug
 app.get('/test', (_, res) => {
   res.json({
     status: 'OK',
     timestamp: new Date().toISOString(),
     environment: {
       DEEPGRAM_API_KEY: !!process.env.DEEPGRAM_API_KEY,
-      OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
-      PORT: process.env.PORT || 3000,
-      NODE_ENV: process.env.NODE_ENV || 'development',
+      OPENAI_API_KEY:   !!process.env.OPENAI_API_KEY,
+      PORT:            process.env.PORT || 3000,
+      NODE_ENV:        process.env.NODE_ENV || 'development',
     },
     uptime: process.uptime(),
     memory: process.memoryUsage(),
   });
 });
-
-// Root
 app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
-
-// on‑demand TTS (not streaming)
 app.get('/test-tts', async (req, res) => {
   try {
     const text = req.query.text || 'Hello, test.';
@@ -227,8 +230,6 @@ app.get('/test-tts', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
-// Simple health check
 app.get('/health', (_, res) => res.json({ status: 'ok', responseTime: 0 }));
 
 // Global error handler
@@ -237,15 +238,7 @@ app.use((err, _, res, next) => {
   if (!res.headersSent) res.status(500).send('Server error');
 });
 
-// Google OAuth2 for Calendar
-app.get('/auth', (req, res) => {
-  const url = oauth2Client.generateAuthUrl({
-    access_type: 'offline',
-    scope: ['https://www.googleapis.com/auth/calendar'],
-    prompt: 'consent',
-  });
-  res.redirect(url);
-});
+
 app.get('/oauth2callback', async (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).send('No code provided');
@@ -260,6 +253,16 @@ app.get('/oauth2callback', async (req, res) => {
   }
 });
 
-// Start HTTP+WS server
+// Google OAuth2 for Calendar
+app.get('/auth', (req, res) => {
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/calendar'],
+    prompt: 'consent',
+  });
+  res.redirect(url);
+});
+
+// Start server
 const port = process.env.PORT || 3000;
 server.listen(port, () => console.log(`🚀 Server started on ${port}`));

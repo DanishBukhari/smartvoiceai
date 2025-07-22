@@ -10,6 +10,9 @@ const openai = new OpenAI({
 });
 
 const stateMachine = {
+   // new booking states
+  awaitingAddress: false,
+  awaitingTime:    false,
   currentState: 'start',
   conversationHistory: [],
   clientData: {},
@@ -201,15 +204,13 @@ async function learnFromInput(input) {
   Return ONLY the JSON object, no markdown formatting or additional text.`);
   
   try {
-    // Clean the response to extract just the JSON
-    let jsonStr = analysis.trim();
-    if (jsonStr.includes('```json')) {
-      jsonStr = jsonStr.split('```json')
-    } else if (jsonStr.includes('```')) {
-      jsonStr = jsonStr.split('```')[1].split('```')[0].trim();
-    }
     
-    const insights = JSON.parse(jsonStr);
+   let jsonStr = analysis.trim()
+      .replace(/^```(?:json)?/, '')
+      .replace(/```$/, '')
+      .trim();
+
+     const insights = JSON.parse(jsonStr);
     
     // Store insights for future improvements
     if (insights.issue) {
@@ -241,7 +242,7 @@ async function handleStart(input) {
     'water': "Do you have any hot water at all?",
     'leak': "Has the water been shut off, or is it still running?",
     'pipe': "Has the water been shut off, or is it still running?",
-    'pump': "Is the pump standalone or submersible?",
+    'pump': "Is the pump standalone or submersib-le?",
     'roof': "Is water dripping inside right now?",
     'quote': "What would you like us to quote—new installation, repair, or inspection?"
   };
@@ -348,11 +349,7 @@ async function askBooking(input) {
   console.log('askBooking: User response', input);
   
   // Check if user wants to book (says yes or provides their name)
-  if (input.toLowerCase().includes('yes') || 
-      input.toLowerCase().includes('book') || 
-      input.toLowerCase().includes('appointment') ||
-      // Check if input looks like a name (contains letters and possibly spaces)
-      /^[a-zA-Z\s]+$/.test(input.trim())) {
+  if (/^(yes|sure|please book|appointment)/i.test(input) || /^[a-z\s]+$/i.test(input.trim())) {
     
     // If they provided a name directly, store it
     if (/^[a-zA-Z\s]+$/.test(input.trim()) && !input.toLowerCase().includes('yes')) {
@@ -361,6 +358,7 @@ async function askBooking(input) {
     }
     
     stateMachine.currentState = 'collect_details';
+    stateMachine.awaitingAddress = true;
     return await collectClientDetails('');
   } else {
     stateMachine.currentState = 'general';
@@ -384,13 +382,15 @@ async function collectClientDetails(input) {
     console.log('collectClientDetails: Prompt', response);
     return response;
   } else {
-    stateMachine.currentState = 'book_appointment';
+    // stateMachine.currentState = 'book_appointment';
+    stateMachine.awaitingAddress = false;
+    stateMachine.awaitingTime    = true;
     let response;
     if (stateMachine.clientData.urgent) {
       // For urgent, directly compute and propose next slot
       response = await handleAppointmentBooking('asap'); // Pass 'asap' to indicate urgent
     } else {
-      response = await getResponse("When would you like your appointment? Our day starts at 7 AM UTC.", stateMachine.conversationHistory);
+     response = await getResponse("When would you like your appointment? Please give me a date & time (e.g. “tomorrow at 9 AM UTC”).", stateMachine.conversationHistory);
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
       console.log('collectClientDetails: Booking prompt', response);
     }
@@ -574,6 +574,14 @@ async function collectSpecialInstructions(input) {
 }
 
 async function handleGeneralQuery(input) {
+
+    // if we're waiting for a preferred time, bypass general
+  if (stateMachine.awaitingTime) {
+    stateMachine.awaitingTime = false;
+    // now actually do the booking
+    stateMachine.currentState = 'book_appointment';
+    return await handleAppointmentBooking(input);
+  }
   console.log('handleGeneralQuery: Processing', input);
   const response = await getResponse(input.includes('AI') ? "Yep, I'm an AI assistant for Usher Fix Plumbing! How can I help you?" : input, stateMachine.conversationHistory);
   stateMachine.conversationHistory.push({ role: 'assistant', content: response });
