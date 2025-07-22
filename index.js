@@ -89,7 +89,6 @@ wss.on('connection', (ws) => {
 
           ttsConnection.on(LiveTTSEvents.Open, () => {
             isSpeaking = true;
-            ttsConnection.pause();       
             ttsConnection.sendText(reply);
             ttsConnection.flush();
           });
@@ -115,7 +114,6 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
-            ttsConnection.resume();       
           
           });
 
@@ -184,7 +182,6 @@ async function sendTTS(ws, streamSid, text) {
 
     ttsConnection.on(LiveTTSEvents.Open, () => {
       isSpeaking = true;
-      ttsConnection.pause();       
       ttsConnection.sendText(text);
       ttsConnection.flush();
     });
@@ -210,7 +207,6 @@ async function sendTTS(ws, streamSid, text) {
         }
       }));
 
-      ttsConnection.resume();
     });
 
     ttsConnection.on(LiveTTSEvents.Error, (err) => {
