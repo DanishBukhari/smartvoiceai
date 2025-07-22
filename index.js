@@ -60,7 +60,7 @@ wss.on('connection', (ws) => {
   });
 
   // Connect to Deepgram for live STT
-  const dgConnection = deepgram.listen.live({
+  const dgConnection = deepgram.transcription.live({
     model: 'nova-2',
     language: 'en-AU',
     smart_format: true,
@@ -86,7 +86,7 @@ wss.on('connection', (ws) => {
       console.log('NLP Reply:', reply);
 
       // Generate TTS with Deepgram live
-      const ttsConnection = deepgram.speak.live({
+      const ttsConnection = deepgram.tts.live({
         model: 'aura-2-andromeda-en',
         encoding: 'mulaw',
         sample_rate: 8000,
@@ -168,7 +168,7 @@ wss.on('connection', (ws) => {
 // Function to send TTS audio via WebSocket
 async function sendTTS(ws, streamSid, text) {
   try {
-    const ttsConnection = deepgram.speak.live({
+    const ttsConnection = deepgram.tts.live({
       model: 'aura-2-andromeda-en',
       encoding: 'mulaw',
       sample_rate: 8000,
