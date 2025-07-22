@@ -124,14 +124,14 @@ wss.on('connection', (ws) => {
           mark: { name: 'endOfResponse' }
         }));
         isSpeaking = false;
-        dgTts.close();       // ensure this TTS socket closes
+        // dgTts.close();       // ensure this TTS socket closes
         ttsInFlight = false; // ready for next TTS
       });
       dgTts.on(LiveTTSEvents.Error, (err) => {
         console.error('Deepgram TTS error', err);
         ws.send(JSON.stringify({ event: 'clear', streamSid }));
         isSpeaking = false;
-        dgTts.close();
+        // dgTts.close();
         ttsInFlight = false;
       });
 
