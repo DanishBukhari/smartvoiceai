@@ -41,6 +41,8 @@ app.post('/voice', (req, res) => {
 // WebSocket for media stream
 wss.on('connection', (ws) => {
   console.log('New WebSocket connection');
+
+
   
   let streamSid;
   let mediaBuffer = Buffer.alloc(0);
@@ -171,62 +173,62 @@ wss.on('connection', (ws) => {
     if (dgConnection) dgConnection.finish();
     console.log('WebSocket closed');
   });
+  // Function to send TTS audio via WebSocket
+  async function sendTTS(ws, streamSid, text) {
+    try {
+      const ttsConnection = deepgram.speak.live({
+        model: 'aura-2-andromeda-en',
+        encoding: 'mulaw',
+        sample_rate: 8000,
+      });
+  
+      ttsConnection.on(LiveTTSEvents.Open, () => {
+        isSpeaking = true;
+        // ttsConnection.resume();       
+  
+        ttsConnection.sendText(text);
+        ttsConnection.flush();
+      });
+  
+      ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
+        if (Buffer.isBuffer(audioChunk)) {
+                const base64Chunk = audioChunk.toString('base64');
+                ws.send(JSON.stringify({
+                  event: 'media',
+                  streamSid: streamSid,
+                  media: { payload: base64Chunk }
+                
+              }));
+              }
+      });
+  
+      ttsConnection.on(LiveTTSEvents.Flushed, () => {
+        ws.send(JSON.stringify({
+          event: 'mark',
+          streamSid: streamSid,
+          mark: {
+            name: 'endOfResponse'
+          }
+        }));
+        isSpeaking = false;
+        
+      });
+  
+      ttsConnection.on(LiveTTSEvents.Error, (err) => {
+        console.error('Initial TTS error:', err);
+        ws.send(JSON.stringify({
+          event: 'clear',
+          streamSid: streamSid
+        }));
+        // ttsConnection.close();
+      });
+    } catch (error) {
+      console.error('Initial TTS error:', error);
+      // Fallback if needed
+    }
+  }
 });
 
-// Function to send TTS audio via WebSocket
-async function sendTTS(ws, streamSid, text) {
-  try {
-    const ttsConnection = deepgram.speak.live({
-      model: 'aura-2-andromeda-en',
-      encoding: 'mulaw',
-      sample_rate: 8000,
-    });
-
-    ttsConnection.on(LiveTTSEvents.Open, () => {
-      isSpeaking = true;
-      // ttsConnection.resume();       
-
-      ttsConnection.sendText(text);
-      ttsConnection.flush();
-    });
-
-    ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
-      if (Buffer.isBuffer(audioChunk)) {
-              const base64Chunk = audioChunk.toString('base64');
-              ws.send(JSON.stringify({
-                event: 'media',
-                streamSid: streamSid,
-                media: { payload: base64Chunk }
-              
-            }));
-            }
-    });
-
-    ttsConnection.on(LiveTTSEvents.Flushed, () => {
-      ws.send(JSON.stringify({
-        event: 'mark',
-        streamSid: streamSid,
-        mark: {
-          name: 'endOfResponse'
-        }
-      }));
-      isSpeaking = false;
-      
-    });
-
-    ttsConnection.on(LiveTTSEvents.Error, (err) => {
-      console.error('Initial TTS error:', err);
-      ws.send(JSON.stringify({
-        event: 'clear',
-        streamSid: streamSid
-      }));
-      // ttsConnection.close();
-    });
-  } catch (error) {
-    console.error('Initial TTS error:', error);
-    // Fallback if needed
-  }
-}
 
 // Healthcheck
 app.get('/test', (_, res) => {
@@ -254,7 +256,7 @@ app.get('/test-tts', async (req, res) => {
     const testText = req.query.text || "Hello, this is a test.";
     
     console.log('Testing TTS with text:', testText);
-    const { result, error } = await deepgram.speak.speak({ text: testText }, { model: 'aura-asteria-en' });
+    const { result, error } = await deepgram.speak.speak({ text: testText }, { model: 'aura-2-andromeda-en' });
     if (error) throw error;
     const stream = result.stream;
     if (!stream) {
