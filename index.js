@@ -89,7 +89,7 @@ wss.on('connection', (ws) => {
 
           ttsConnection.on(LiveTTSEvents.Open, () => {
             isSpeaking=ture
-            ttsConnection.pause();
+            // ttsConnection.pause();
             ttsConnection.sendText(reply);
             ttsConnection.flush();
           });
@@ -115,7 +115,7 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
-            ttsConnection.resume()
+            // ttsConnection.resume()
           
           });
 
@@ -184,7 +184,7 @@ async function sendTTS(ws, streamSid, text) {
 
     ttsConnection.on(LiveTTSEvents.Open, () => {
       isSpeaking = true;
-      ttsConnection.resume();       
+      // ttsConnection.resume();       
 
       ttsConnection.sendText(text);
       ttsConnection.flush();
