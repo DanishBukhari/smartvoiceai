@@ -88,19 +88,22 @@ wss.on('connection', (ws) => {
           });
 
           ttsConnection.on(LiveTTSEvents.Open, () => {
+            isSpeaking = true;
+            dgConnection.pause();       
             ttsConnection.sendText(reply);
             ttsConnection.flush();
           });
 
           ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
-            const base64Chunk = Buffer.from(audioChunk).toString('base64');
-            ws.send(JSON.stringify({
-              event: 'media',
-              streamSid: streamSid,
-              media: {
-                payload: base64Chunk
-              }
+              if (Buffer.isBuffer(audioChunk)) {
+              const base64Chunk = audioChunk.toString('base64');
+              ws.send(JSON.stringify({
+                event: 'media',
+                streamSid: streamSid,
+                media: { payload: base64Chunk }
+              
             }));
+            }
           });
 
           ttsConnection.on(LiveTTSEvents.Flushed, () => {
@@ -112,7 +115,7 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
-            
+            dgConnection.resume();       
           
           });
 
@@ -180,19 +183,22 @@ async function sendTTS(ws, streamSid, text) {
     });
 
     ttsConnection.on(LiveTTSEvents.Open, () => {
+      isSpeaking = true;
+      dgConnection.pause();       
       ttsConnection.sendText(text);
       ttsConnection.flush();
     });
 
     ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
-      const base64Chunk = Buffer.from(audioChunk).toString('base64');
-      ws.send(JSON.stringify({
-        event: 'media',
-        streamSid: streamSid,
-        media: {
-          payload: base64Chunk
-        }
-      }));
+      if (Buffer.isBuffer(audioChunk)) {
+              const base64Chunk = audioChunk.toString('base64');
+              ws.send(JSON.stringify({
+                event: 'media',
+                streamSid: media,
+                media: { payload: base64Chunk }
+              
+            }));
+            }
     });
 
     ttsConnection.on(LiveTTSEvents.Flushed, () => {
@@ -204,7 +210,7 @@ async function sendTTS(ws, streamSid, text) {
         }
       }));
 
-      
+      dgConnection.resume();
     });
 
     ttsConnection.on(LiveTTSEvents.Error, (err) => {
