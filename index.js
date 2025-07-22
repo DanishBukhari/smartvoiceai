@@ -88,7 +88,7 @@ wss.on('connection', (ws) => {
           });
 
           ttsConnection.on(LiveTTSEvents.Open, () => {
-            isSpeaking = ture
+            isSpeaking = true;
             // ttsConnection.pause();
             ttsConnection.sendText(reply);
             ttsConnection.flush();
