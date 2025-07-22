@@ -88,7 +88,6 @@ wss.on('connection', (ws) => {
           });
 
           ttsConnection.on(LiveTTSEvents.Open, () => {
-            isSpeaking = true;
             ttsConnection.sendText(reply);
             ttsConnection.flush();
           });
@@ -114,6 +113,7 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
+            
           
           });
 
@@ -181,7 +181,6 @@ async function sendTTS(ws, streamSid, text) {
     });
 
     ttsConnection.on(LiveTTSEvents.Open, () => {
-      isSpeaking = true;
       ttsConnection.sendText(text);
       ttsConnection.flush();
     });
@@ -191,7 +190,7 @@ async function sendTTS(ws, streamSid, text) {
               const base64Chunk = audioChunk.toString('base64');
               ws.send(JSON.stringify({
                 event: 'media',
-                streamSid: media,
+                streamSid: streamSid,
                 media: { payload: base64Chunk }
               
             }));
@@ -207,6 +206,7 @@ async function sendTTS(ws, streamSid, text) {
         }
       }));
 
+      
     });
 
     ttsConnection.on(LiveTTSEvents.Error, (err) => {
