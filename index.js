@@ -66,8 +66,8 @@ wss.on('connection', (ws) => {
     utterances: true,
     interim_results: true,
     endpointing: 250,
-    encoding: 'linear16',
-    sample_rate: 8000,
+    encoding: 'mulaw',
+    sample_rate: 8000,  // Match Twilio audio format
   });
 
   dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram STT connected'));
@@ -85,7 +85,7 @@ wss.on('connection', (ws) => {
         // Generate TTS with Deepgram live (v3 syntax for streaming TTS)
         const ttsConnection = deepgram.speak.live({
           model: 'aura-asteria-en',
-          encoding: 'linear16',
+          encoding: 'mulaw',
           sample_rate: 8000,
         });
 
@@ -96,7 +96,7 @@ wss.on('connection', (ws) => {
         });
 
         ttsConnection.on(LiveTTSEvents.Audio, (audioChunk) => {
-          console.log('Sending TTS audio chunk');
+          console.log('Sending TTS audio chunk', audioChunk.length);
           const base64Chunk = Buffer.from(audioChunk).toString('base64');
           ws.send(JSON.stringify({
             event: 'media',
@@ -149,6 +149,7 @@ wss.on('connection', (ws) => {
         break;
       case 'media':
         const audioData = Buffer.from(msg.media.payload, 'base64');
+        console.log('Received media chunk', audioData.length);
         mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
         if (!isSpeaking && dgConnection.readyState === WebSocket.OPEN) {
           dgConnection.send(audioData);
@@ -171,11 +172,12 @@ async function sendTTS(ws, streamSid, text) {
   try {
     const ttsConnection = deepgram.speak.live({
       model: 'aura-asteria-en',
-      encoding: 'linear16',
+      encoding: 'mulaw',
       sample_rate: 8000,
     });
 
     ttsConnection.on(LiveTTSEvents.Open, () => {
+      console.log('Deepgram TTS connected');
       ttsConnection.sendText(text);
       ttsConnection.flush();
     });
