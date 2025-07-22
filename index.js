@@ -112,6 +112,7 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
+            ttsConnection.finish()
           
           });
 
@@ -151,9 +152,9 @@ wss.on('connection', (ws) => {
         sendTTS(ws, streamSid, "Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
         break;
       case 'media':
-        const audioData = Buffer.from(msg.media.payload, 'base64');
-        mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
         if (!isSpeaking && dgConnection.readyState === WebSocket.OPEN) {
+          const audioData = Buffer.from(msg.media.payload, 'base64');
+          mediaBuffer = Buffer.concat([mediaBuffer, audioData]);
           dgConnection.send(audioData);
         }
         break;
@@ -202,6 +203,8 @@ async function sendTTS(ws, streamSid, text) {
           name: 'endOfResponse'
         }
       }));
+            ttsConnection.finish()
+
       
     });
 
