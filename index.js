@@ -122,7 +122,7 @@ wss.on('connection', (ws) => {
               streamSid: streamSid
             }));
             isSpeaking = false;
-            ttsConnection.close();
+            // ttsConnection.close();
           });
 
           isSpeaking = true;
@@ -211,7 +211,7 @@ async function sendTTS(ws, streamSid, text) {
         event: 'clear',
         streamSid: streamSid
       }));
-      ttsConnection.close();
+      // ttsConnection.close();
     });
   } catch (error) {
     console.error('Initial TTS error:', error);
