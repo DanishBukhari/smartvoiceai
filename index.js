@@ -112,7 +112,7 @@ wss.on('connection', (ws) => {
               }
             }));
             isSpeaking = false;
-            ttsConnection.close();
+            ttsConnection.finish();
           });
 
           ttsConnection.on(LiveTTSEvents.Error, (err) => {
@@ -202,7 +202,7 @@ async function sendTTS(ws, streamSid, text) {
           name: 'endOfResponse'
         }
       }));
-      ttsConnection.close();
+      ttsConnection.finish();
     });
 
     ttsConnection.on(LiveTTSEvents.Error, (err) => {
