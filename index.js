@@ -143,27 +143,36 @@ app.get('/test', (_, res) => {
   res.json({ status: 'OK', time: new Date().toISOString() });
 });
 app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
+const oauth2Client = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  'https://smartvoiceai-fa77bfa7f137.herokuapp.com/oauth2callback'  // Your Heroku URL
+);
+
+app.get('/oauth2callback', async (req, res) => {
+  const code = req.query.code;
+  if (code) {
+    try {
+      const { tokens } = await oauth2Client.getToken(code);
+      console.log('Access Token:', tokens.access_token);
+      console.log('Refresh Token:', tokens.refresh_token);
+      res.send(`OAuth complete. Refresh Token: ${tokens.refresh_token}. Copy this to your .env GOOGLE_REFRESH_TOKEN.`);
+    } catch (error) {
+      console.error('OAuth callback error:', error);
+      res.status(500).send('Error exchanging code for tokens');
+    }
+  } else {
+    res.status(400).send('No code provided');
+  }
+});
+
 app.get('/auth', (req, res) => {
-  const oauth2Client = new OAuth2Client(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.OAUTH_REDIRECT_URI
-  );
-  res.redirect(oauth2Client.generateAuthUrl({
+  const authorizeUrl = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/calendar'],
     prompt: 'consent',
-  }));
-});
-app.get('/oauth2callback', async (req, res) => {
-  const oauth2Client = new OAuth2Client(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.OAUTH_REDIRECT_URI
-  );
-  const { tokens } = await oauth2Client.getToken(req.query.code);
-  console.log('OAuth tokens:', tokens);
-  res.send('OAuth complete, check logs.');
+  });
+  res.redirect(authorizeUrl);
 });
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
