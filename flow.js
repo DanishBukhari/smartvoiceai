@@ -205,13 +205,7 @@ async function learnFromInput(input) {
   Return ONLY the JSON object, no markdown formatting or additional text.`);
   
   try {
-    // Clean the response to extract just the JSON
-    let jsonStr = analysis.trim();
-    if (jsonStr.includes('```json')) {
-      jsonStr = jsonStr.split('```json')
-    } else if (jsonStr.includes('```')) {
-      jsonStr = jsonStr.split('```')[1].split('```')[0].trim();
-    }
+    let jsonStr = analysis.trim().replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
     
     const insights = JSON.parse(jsonStr);
     
@@ -317,7 +311,7 @@ async function askNextQuestion(input) {
   
   const questions = issueQuestions[stateMachine.currentState];
   
-  if (stateMachine.questionIndex < questions.length) {
+  if (questions && stateMachine.questionIndex < questions.length) {
     // Make questions more contextual
     let contextualQuestion = questions[stateMachine.questionIndex];
     
@@ -375,24 +369,21 @@ async function askBooking(input) {
 
 async function collectClientDetails(input) {
   console.log('collectClientDetails: Current data', stateMachine.clientData);
-  const details = ['name', 'email', 'address'];
-  const currentDetail = details[stateMachine.questionIndex];
-
-  if (input) stateMachine.clientData[currentDetail] = input;
-
-  if (stateMachine.questionIndex < details.length) {
+  const details = ['name', 'email', 'address']; // Removed 'phone' since it's auto-set
+  const currentDetail = details.find(d => !stateMachine.clientData[d]);
+  if (currentDetail) {
+    if (input) stateMachine.clientData[currentDetail] = input;
     const prompts = {
-      name: "[DETAIL:name] What's your full name, please?",
-      email: "[DETAIL:email] Could I have your email address?",
-      address: "[DETAIL:address] And your full address?",
+      name: "What's your full name, please?",
+      email: "Could I have your email address?",
+      address: "And your full address?",
     };
-    const prompt = prompts[currentDetail];
-    const response = await getResponse(prompt, stateMachine.conversationHistory);
+    const response = await getResponse(prompts[currentDetail], stateMachine.conversationHistory);
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     console.log('collectClientDetails: Prompt', response);
-    stateMachine.questionIndex++;
     return response;
   } else {
+    // stateMachine.currentState = 'book_appointment';
     stateMachine.awaitingAddress = false;
     stateMachine.awaitingTime    = true;
     let response;
@@ -400,7 +391,7 @@ async function collectClientDetails(input) {
       // For urgent, directly compute and propose next slot
       response = await handleAppointmentBooking('asap'); // Pass 'asap' to indicate urgent
     } else {
-     response = await getResponse("[DETAIL:time] When would you like your appointment? Please give me a date & time (e.g. “tomorrow at 9 AM Brisbane time”).", stateMachine.conversationHistory);
+     response = await getResponse("When would you like your appointment? Please give me a date & time (e.g. “tomorrow at 9 AM UTC”).", stateMachine.conversationHistory);
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
       console.log('collectClientDetails: Booking prompt', response);
     }
@@ -416,20 +407,22 @@ async function handleAppointmentBooking(input) {
     return "Sorry, I can't access the calendar right now. Please try again later.";
   }
 
-  const nowBris = new Date(new Date().toLocaleString('en-US', { timeZone: BRISBANE_TZ }));
-  const todayBris = new Date(nowBris.getFullYear(), nowBris.getMonth(), nowBris.getDate());
-  const minStartDate = new Date(todayBris.getTime() + 7 * 60 * 60 * 1000); // 7 AM today
-  const maxEndDate = new Date(todayBris.getTime() + 19 * 60 * 60 * 1000); // 7 PM today
+  // Use dynamic dates
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const minStartDate = new Date(today.getTime() + 7 * 60 * 60 * 1000); // 7 AM today
+  const maxEndDate = new Date(today.getTime() + 19 * 60 * 60 * 1000); // 7 PM today
   
-  if (nowBris.getHours() >= 19) {
-    const tomorrowBris = new Date(todayBris.getTime() + 24 * 60 * 60 * 1000);
-    minStartDate.setTime(tomorrowBris.getTime() + 7 * 60 * 60 * 1000);
-    maxEndDate.setTime(tomorrowBris.getTime() + 19 * 60 * 60 * 1000);
+  // If it's past 7 PM, start from tomorrow
+  if (now.getHours() >= 19) {
+    const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
+    minStartDate.setTime(tomorrow.getTime() + 7 * 60 * 60 * 1000);
+    maxEndDate.setTime(tomorrow.getTime() + 19 * 60 * 60 * 1000);
   }
   
-  let earliestStartTime = new Date(Math.max(nowBris.getTime(), minStartDate.getTime()));
+  let earliestStartTime = new Date(Math.max(now.getTime(), minStartDate.getTime()));
 
-  const lastAppointment = await getLastAppointment(accessToken, new Date(nowBris.getTime() + 7 * 24 * 60 * 60 * 1000));
+  const lastAppointment = await getLastAppointment(accessToken, new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
   if (lastAppointment) {
     const lastEndTime = new Date(lastAppointment.end.dateTime);
     const lastLocation = lastAppointment.location?.displayName || 'Unknown';
@@ -448,7 +441,7 @@ async function handleAppointmentBooking(input) {
     }
   } else {
     // Parse preferred time from input
-    const parsePrompt = `Parse the preferred appointment time from: "${input}". Current time is ${nowBris.toISOString()}. Return ISO datetime string (YYYY-MM-DDTHH:mm:00Z) or "invalid" if can't parse. Assume Brisbane time (Australia/Brisbane). If no date, use today or tomorrow if past.`;
+    const parsePrompt = `Parse the preferred appointment time from: "${input}". Current time is ${now.toISOString()}. Return ISO datetime string (YYYY-MM-DDTHH:mm:00Z) or "invalid" if can't parse. Assume UTC. If no date, use today or tomorrow if past.`;
     let preferredStr = await getResponse(parsePrompt);
     if (preferredStr === "invalid") {
       return await getResponse("Sorry, I didn't understand the time. When would you like your appointment?", stateMachine.conversationHistory);
@@ -470,10 +463,10 @@ async function handleAppointmentBooking(input) {
       }
     }
   }
-
+  const BRISBANE_TZ = 'Australia/Brisbane'
   stateMachine.nextSlot = nextSlot;
   const formattedSlot = nextSlot.toLocaleString('en-US', { 
-    timeZone: BRISBANE_TZ,
+    timeZone: BRISBANE_TZ, 
     hour: 'numeric', 
     minute: 'numeric', 
     hour12: true,
@@ -498,11 +491,7 @@ async function confirmSlot(input) {
     return response;
   } else {
     stateMachine.currentState = 'book_appointment';
-    const nowBris = new Date(new Date().toLocaleString('en-US', { timeZone: BRISBANE_TZ }));
-    const tomorrow = new Date(nowBris);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const prettyTomorrow = tomorrow.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    const response = await getResponse(`No worries! Tomorrow is ${prettyTomorrow}. When would you prefer instead?`, stateMachine.conversationHistory);
+    const response = await getResponse("No worries! When would you prefer instead?", stateMachine.conversationHistory);
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     console.log('confirmSlot: Re-prompting', response);
     return response;
@@ -619,4 +608,4 @@ async function getEmotionallyAwareResponse(basePrompt, context = {}) {
   return await getResponse(enhancedPrompt, stateMachine.conversationHistory);
 }
 
-module.exports = { handleInput, stateMachine, handleTimeout };
+module.exports = { handleInput, stateMachine, handleTimeout }

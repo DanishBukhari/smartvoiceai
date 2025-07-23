@@ -4,19 +4,27 @@ const { VoiceResponse } = require('twilio').twiml;
 const WebSocket = require('ws');
 const { createClient, LiveTranscriptionEvents, LiveTTSEvents } = require('@deepgram/sdk');
 const { handleInput, stateMachine } = require('./flow');
+const { OpenAI } = require('openai');
 const path = require('path');
 const { OAuth2Client } = require('google-auth-library');
 
+// Express setup
 const app = express();
 const server = require('http').createServer(app);
 const wss = new WebSocket.Server({ server });
-const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-
 app.enable('trust proxy');
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.urlencoded({ extended: true }));
 
-// incoming call webhook
+// Deepgram client
+const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
+// OpenAI client (used inside flow.js)
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+
+// —————————
+// 1) Twilio /voice endpoint → start media stream
+// —————————
 app.post('/voice', (req, res) => {
   const twiml = new VoiceResponse();
   const connect = twiml.connect();
@@ -28,15 +36,17 @@ app.post('/voice', (req, res) => {
   res.type('text/xml').send(twiml.toString());
 });
 
-// WebSocket for media
+// —————————
+// 2) WebSocket handler for Twilio media
+// —————————
 wss.on('connection', (ws) => {
   console.log('New WebSocket connection');
-
   let streamSid;
   let isSpeaking = false;
-  let mediaBuffer = Buffer.alloc(0);
+  let sttReady = false;
+  let ttsInFlight = false; // <— throttle flag
 
-  // reset per-call state
+  // Reset stateMachine
   Object.assign(stateMachine, {
     currentState: 'start',
     conversationHistory: [],
@@ -44,71 +54,86 @@ wss.on('connection', (ws) => {
     issueType: null,
     questionIndex: 0,
     nextSlot: null,
+    awaitingAddress: false,
+    awaitingTime: false,
+    bookingRetryCount: 0,
   });
 
-  // Deepgram STT
-  const dgConnection = deepgram.listen.live({
+  // —— Deepgram streaming STT ——
+  const dgStt = deepgram.listen.live({
     model: 'nova-2',
     language: 'en-AU',
     smart_format: true,
     filler_words: false,
-    utterances: true,
     interim_results: true,
+    utterances: true,
     endpointing: 250,
+    encoding: 'mulaw',
+    sample_rate: 8000,
   });
-  dgConnection.on(LiveTranscriptionEvents.Open, () => console.log('Deepgram STT connected'));
-  dgConnection.on(LiveTranscriptionEvents.Error, (err) => console.error('Deepgram STT error', err));
-  dgConnection.on(LiveTranscriptionEvents.Transcript, async (data) => {
-    const transcript = data.channel.alternatives[0].transcript;
-    if (transcript && data.is_final) {
-      console.log('STT Transcript:', transcript);
-      const reply = await handleInput(transcript);
+
+  dgStt.on(LiveTranscriptionEvents.Open, () => {
+    console.log('Deepgram STT connected');
+    sttReady = true;
+  });
+  dgStt.on(LiveTranscriptionEvents.Error, (err) => {
+    console.error('Deepgram STT error', err);
+  });
+  dgStt.on(LiveTranscriptionEvents.Transcript, async (data) => {
+    const alt = data.channel.alternatives[0];
+    if (alt.transcript && data.is_final) {
+      console.log('STT Transcript:', alt.transcript);
+      const reply = await handleInput(alt.transcript);
       console.log('NLP Reply:', reply);
-      sendTTS(reply);
-    }
-  });
 
-  // TTS helper (inside connection so it shares isSpeaking & streamSid)
-  async function sendTTS(text) {
-    const tts = deepgram.speak.live({
-      model: 'aura-asteria-en',
-      encoding: 'mulaw',
-      sample_rate: 8000,
-    });
+      // —— Deepgram streaming TTS ——
+      if (ttsInFlight) {
+        console.warn('TTS still in flight—dropping reply');
+        return;
+      }
+      ttsInFlight = true;
 
-    tts.on(LiveTTSEvents.Open, () => {
-      isSpeaking = true;
-      tts.sendText(text);
-      tts.flush();
-    });
-
-    tts.on(LiveTTSEvents.Audio, (chunk) => {
-      if (Buffer.isBuffer(chunk)) {
+      const dgTts = deepgram.speak.live({
+        model: 'aura-2-andromeda-en',
+        encoding: 'mulaw',
+        sample_rate: 8000,
+      });
+      dgTts.on(LiveTTSEvents.Open, () => {
+        console.log('Deepgram TTS connected');
+        dgTts.sendText(reply);
+        dgTts.flush();
+      });
+      dgTts.on(LiveTTSEvents.Audio, (chunk) => {
+        const payload = Buffer.from(chunk).toString('base64');
         ws.send(JSON.stringify({
           event: 'media',
           streamSid,
-          media: { payload: chunk.toString('base64') }
+          media: { payload }
         }));
-      }
-    });
+      });
+      dgTts.on(LiveTTSEvents.Flushed, () => {
+        ws.send(JSON.stringify({
+          event: 'mark',
+          streamSid,
+          mark: { name: 'endOfResponse' }
+        }));
+        isSpeaking = false;
+        // dgTts.close();       // ensure this TTS socket closes
+        ttsInFlight = false; // ready for next TTS
+      });
+      dgTts.on(LiveTTSEvents.Error, (err) => {
+        console.error('Deepgram TTS error', err);
+        ws.send(JSON.stringify({ event: 'clear', streamSid }));
+        isSpeaking = false;
+        // dgTts.close();
+        ttsInFlight = false;
+      });
 
-    tts.on(LiveTTSEvents.Flushed, () => {
-      ws.send(JSON.stringify({
-        event: 'mark',
-        streamSid,
-        mark: { name: 'endOfResponse' }
-      }));
-      isSpeaking = false;
-    });
+      isSpeaking = true;
+    }
+  });
 
-    tts.on(LiveTTSEvents.Error, (err) => {
-      console.error('Deepgram TTS error:', err);
-      ws.send(JSON.stringify({ event: 'clear', streamSid }));
-      isSpeaking = false;
-    });
-  }
-
-  // Twilio media events
+  // —— Twilio media frames in ——
   ws.on('message', (raw) => {
     const msg = JSON.parse(raw);
     switch (msg.event) {
@@ -117,32 +142,97 @@ wss.on('connection', (ws) => {
         break;
       case 'start':
         streamSid = msg.streamSid;
-        console.log('Stream started, Sid:', streamSid);
-        sendTTS("Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?");
+        console.log('Stream started:', streamSid);
+        sendTTS(ws, streamSid, 'Hello, this is Robyn from Usher Fix Plumbing. How can I help you today?');
         break;
       case 'media':
-        if (!isSpeaking && dgConnection.readyState === WebSocket.OPEN) {
-          const audioData = Buffer.from(msg.media.payload, 'base64');
-          dgConnection.send(audioData);
+        if (sttReady && !isSpeaking) {
+          const audio = Buffer.from(msg.media.payload, 'base64');
+          dgStt.send(audio);
         }
         break;
       case 'stop':
         console.log('Stream stopped');
+        dgStt.finish();
         break;
     }
   });
 
   ws.on('close', () => {
-    dgConnection.finish();
     console.log('WebSocket closed');
+    dgStt.finish();
   });
 });
 
-// health & misc endpoints
+// —————————
+// Helper: send TTS greeting or any text
+// —————————
+async function sendTTS(ws, streamSid, text) {
+  try {
+    const dgTts = deepgram.speak.live({
+      model: 'aura-2-andromeda-en',
+      encoding: 'mulaw',
+      sample_rate: 8000,
+    });
+    dgTts.on(LiveTTSEvents.Open, () => {
+      dgTts.sendText(text);
+      dgTts.flush();
+    });
+    dgTts.on(LiveTTSEvents.Audio, (chunk) => {
+      const payload = Buffer.from(chunk).toString('base64');
+      ws.send(JSON.stringify({ event: 'media', streamSid, media: { payload } }));
+    });
+    dgTts.on(LiveTTSEvents.Flushed, () => {
+      ws.send(JSON.stringify({ event: 'mark', streamSid, mark: { name: 'endOfResponse' } }));
+      // dgTts.close(); // close after flush
+    });
+    dgTts.on(LiveTTSEvents.Error, (err) => {
+      console.error('sendTTS error', err);
+      ws.send(JSON.stringify({ event: 'clear', streamSid }));
+      // dgTts.close();
+    });
+  } catch (err) {
+    console.error('sendTTS threw', err);
+  }
+}
+
+// —————————
+// Misc endpoints
+// —————————
 app.get('/test', (_, res) => {
-  res.json({ status: 'OK', time: new Date().toISOString() });
+  res.json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    environment: {
+      DEEPGRAM_API_KEY: !!process.env.DEEPGRAM_API_KEY,
+      OPENAI_API_KEY:   !!process.env.OPENAI_API_KEY,
+      PORT:            process.env.PORT || 3000,
+      NODE_ENV:        process.env.NODE_ENV || 'development',
+    },
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+  });
 });
 app.get('/', (_, res) => res.send('SmartVoiceAI is running.'));
+app.get('/test-tts', async (req, res) => {
+  try {
+    const text = req.query.text || 'Hello, test.';
+    const { audio } = await deepgram.speak.text({ text }, { model: 'aura-2-andromeda-en' });
+    res.set('Content-Type', 'audio/wav').send(Buffer.from(audio, 'base64'));
+  } catch (err) {
+    console.error('test-tts error', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get('/health', (_, res) => res.json({ status: 'ok', responseTime: 0 }));
+
+// Global error handler
+app.use((err, _, res, next) => {
+  console.error('Unhandled error:', err);
+  if (!res.headersSent) res.status(500).send('Server error');
+});
+
+
 const oauth2Client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
@@ -174,10 +264,6 @@ app.get('/auth', (req, res) => {
   });
   res.redirect(authorizeUrl);
 });
-app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
-  if (!res.headersSent) res.status(500).send('Server error');
-});
-
+// Start server
 const port = process.env.PORT || 3000;
 server.listen(port, () => console.log(`🚀 Server started on ${port}`));
