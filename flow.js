@@ -1,6 +1,6 @@
 // flow.js (Tweeks: Better classification, partial check, dynamic dates)
 const { getResponse } = require('./nlp');
-const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./google_calendar');
+const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./outlook');
 const { createOrUpdateContact } = require('./ghl');
 const { OpenAI } = require('openai');
 
