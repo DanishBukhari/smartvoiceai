@@ -1,7 +1,6 @@
-// flow.js
-//the scenarios of the texts
+// flow.js (Tweeks: Better classification, partial check, dynamic dates)
 const { getResponse } = require('./nlp');
-const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./outlook');
+const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./google_calendar');
 const { createOrUpdateContact } = require('./ghl');
 const { OpenAI } = require('openai');
 
@@ -115,12 +114,12 @@ async function handleInput(input, confidence = 1.0) {
   // Learn from input
   await learnFromInput(input);
   
-  // Improved input validation
-  if (!input || input.trim().length === 0 || confidence < 0.3) {
+  // Improved input validation + partial check
+  if (!input || input.trim().length === 0 || confidence < 0.3 || input.endsWith(',') || input.endsWith(' the') || input.endsWith(' a') || input.endsWith(' an') || input.endsWith(' to') || input.endsWith(' for') || input.endsWith(' with') || input.endsWith(' my')) {
     if (confidence < 0.3) {
       return "Sorry, I didn't quite catch that. Could you please repeat what you said, or speak a bit more clearly?";
     }
-    return "I didn't catch that. Could you please repeat what you said?";
+    return "I think you're still speaking. Go on...";
   }
 
   stateMachine.conversationHistory.push({ role: 'user', content: input });
@@ -275,6 +274,8 @@ Categorize into one of these types:
 - new install/quote: New installations, quotes, upgrades
 - other: General questions, unclear issues, or multiple problems
 
+If the query is a greeting or no issue is mentioned, categorize as 'general'.
+
 Also assess:
 - Urgency level (emergency, urgent, routine)
 - Safety concerns (water damage, electrical issues)
@@ -385,7 +386,7 @@ async function collectClientDetails(input) {
   } else {
     // stateMachine.currentState = 'book_appointment';
     stateMachine.awaitingAddress = false;
-    stateMachine.awaitingTime    = true;
+    stateMachine.awaitingTime = true;
     let response;
     if (stateMachine.clientData.urgent) {
       // For urgent, directly compute and propose next slot
@@ -608,4 +609,4 @@ async function getEmotionallyAwareResponse(basePrompt, context = {}) {
   return await getResponse(enhancedPrompt, stateMachine.conversationHistory);
 }
 
-module.exports = { handleInput, stateMachine, handleTimeout }
+module.exports = { handleInput, stateMachine, handleTimeout };

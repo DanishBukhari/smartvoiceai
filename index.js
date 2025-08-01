@@ -1,3 +1,4 @@
+// index.js
 require('dotenv').config();
 const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
@@ -118,7 +119,7 @@ wss.on('connection', (ws) => {
           mark: { name: 'endOfResponse' }
         }));
         isSpeaking = false;
-        // dgTts.close();       // ensure this TTS socket closes
+        // dgTts.close(); // ensure this TTS socket closes
         ttsInFlight = false; // ready for next TTS
       });
       dgTts.on(LiveTTSEvents.Error, (err) => {
@@ -205,9 +206,9 @@ app.get('/test', (_, res) => {
     timestamp: new Date().toISOString(),
     environment: {
       DEEPGRAM_API_KEY: !!process.env.DEEPGRAM_API_KEY,
-      OPENAI_API_KEY:   !!process.env.OPENAI_API_KEY,
-      PORT:            process.env.PORT || 3000,
-      NODE_ENV:        process.env.NODE_ENV || 'development',
+      OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
+      PORT: process.env.PORT || 3000,
+      NODE_ENV: process.env.NODE_ENV || 'development',
     },
     uptime: process.uptime(),
     memory: process.memoryUsage(),
@@ -233,37 +234,30 @@ app.use((err, _, res, next) => {
 });
 
 
-const oauth2Client = new OAuth2Client(
-  process.env.GOOGLE_CLIENT_ID,
-  process.env.GOOGLE_CLIENT_SECRET,
-  'https://smartvoiceai-fa77bfa7f137.herokuapp.com/oauth2callback'  // Your Heroku URL
-);
-
 app.get('/oauth2callback', async (req, res) => {
   const code = req.query.code;
-  if (code) {
-    try {
-      const { tokens } = await oauth2Client.getToken(code);
-      console.log('Access Token:', tokens.access_token);
-      console.log('Refresh Token:', tokens.refresh_token);
-      res.send(`OAuth complete. Refresh Token: ${tokens.refresh_token}. Copy this to your .env GOOGLE_REFRESH_TOKEN.`);
-    } catch (error) {
-      console.error('OAuth callback error:', error);
-      res.status(500).send('Error exchanging code for tokens');
-    }
-  } else {
-    res.status(400).send('No code provided');
+  if (!code) return res.status(400).send('No code provided');
+  try {
+    const { tokens } = await oauth2Client.getToken(code);
+    console.log('Access:', tokens.access_token);
+    console.log('Refresh:', tokens.refresh_token);
+    res.send(`OAuth complete. Refresh Token: ${tokens.refresh_token}`);
+  } catch (e) {
+    console.error('OAuth error', e);
+    res.status(500).send('Error exchanging code');
   }
 });
 
+// Google OAuth2 for Calendar
 app.get('/auth', (req, res) => {
-  const authorizeUrl = oauth2Client.generateAuthUrl({
+  const url = oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/calendar'],
     prompt: 'consent',
   });
-  res.redirect(authorizeUrl);
+  res.redirect(url);
 });
+
 // Start server
 const port = process.env.PORT || 3000;
 server.listen(port, () => console.log(`🚀 Server started on ${port}`));
