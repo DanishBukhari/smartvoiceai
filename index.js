@@ -67,7 +67,7 @@ wss.on('connection', (ws) => {
     filler_words: false,
     interim_results: true,
     utterances: true,
-    endpointing: 250,
+    endpointing: 750,
     encoding: 'mulaw',
     sample_rate: 8000,
   });

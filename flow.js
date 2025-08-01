@@ -408,7 +408,7 @@ async function handleAppointmentBooking(input) {
   }
 
   // Use dynamic dates
-  const now = new Date();
+  const now = new Date().toLocaleString('en-US', { timeZone: BRISBANE_TZ });
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const minStartDate = new Date(today.getTime() + 7 * 60 * 60 * 1000); // 7 AM today
   const maxEndDate = new Date(today.getTime() + 19 * 60 * 60 * 1000); // 7 PM today
