@@ -115,11 +115,11 @@ async function handleInput(input, confidence = 1.0) {
   await learnFromInput(input);
   
   // Improved input validation + partial check
-  if (!input || input.trim().length === 0 || confidence < 0.3 || input.endsWith(',') || input.endsWith(' the') || input.endsWith(' a') || input.endsWith(' an') || input.endsWith(' to') || input.endsWith(' for') || input.endsWith(' with') || input.endsWith(' my')) {
+  if (!input || input.trim().length === 0 || confidence < 0.3 || input.endsWith(',') || input.endsWith(' the') || input.endsWith(' a') || input.endsWith(' an') || input.endsWith(' to') || input.endsWith(' for') || input.endsWith(' with') || input.endsWith(' my') || input.endsWith('is') || input.endsWith('for') || input.endsWith('or')) {
     if (confidence < 0.3) {
       return "Sorry, I didn't quite catch that. Could you please repeat what you said, or speak a bit more clearly?";
     }
-    return "I think you're still speaking. Go on...";
+    return "Go on...";
   }
 
   stateMachine.conversationHistory.push({ role: 'user', content: input });

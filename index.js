@@ -93,7 +93,7 @@ wss.on('connection', (ws) => {
         return;
       }
       ttsInFlight = true;
-
+      await new Promise(resolve => setTimeout(resolve, 500));
       const dgTts = deepgram.speak.live({
         model: 'aura-2-andromeda-en',
         encoding: 'mulaw',
@@ -128,6 +128,10 @@ wss.on('connection', (ws) => {
         isSpeaking = false;
         // dgTts.close();
         ttsInFlight = false;
+        if (err.message.includes('429')) {
+          console.warn('Rate limit hit - delaying next TTS');
+          setTimeout(() => { ttsInFlight = false; }, 1000); // 1s cooldown
+        }
       });
 
       isSpeaking = true;
