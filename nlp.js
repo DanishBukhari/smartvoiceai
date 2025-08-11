@@ -8,6 +8,8 @@ const openai = new OpenAI({
 
 // Add caching for NLP responses and performance tracking
 const nlpCache = new Map();
+// Clear cache on startup to prevent stale responses
+nlpCache.clear();
 const responseTimeTracker = {
   times: [],
   addTime: function(time) {
@@ -94,9 +96,16 @@ async function getResponse(prompt, conversationHistory = []) {
   const startTime = Date.now();
   console.log('getResponse: Called with prompt', prompt.substring(0, 50) + '...');
   
-  // Only cache very simple, static responses - not complex prompts
+  // Only cache very simple, static responses - not prompts that contain variables
   const cacheKey = prompt.toLowerCase().trim();
-  const isSimplePrompt = prompt.length < 50 && !prompt.includes('\n') && !prompt.includes('Perfect!') && !prompt.includes('Thank you!');
+  const isSimplePrompt = prompt.length < 50 && 
+                        !prompt.includes('\n') && 
+                        !prompt.includes('Perfect!') && 
+                        !prompt.includes('Thank you!') &&
+                        !prompt.includes('email') &&  // Don't cache email-related prompts
+                        !prompt.includes('name') &&   // Don't cache name-related prompts
+                        !prompt.includes('address') && // Don't cache address-related prompts
+                        !prompt.includes('?');       // Don't cache questions
   
   if (isSimplePrompt && nlpCache.has(cacheKey)) {
     const endTime = Date.now();

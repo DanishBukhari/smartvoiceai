@@ -1,4 +1,4 @@
-// flow.js - Comprehensive Merged Flow with Travel Time and Email Confirmation
+﻿// flow.js - Comprehensive Merged Flow with Travel Time and Email Confirmation
 const { getResponse } = require('./nlp');
 const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./outlook');
 const { createOrUpdateContact } = require('./ghl');
@@ -1189,7 +1189,7 @@ async function calculateTravelTime(origin, destination) {
     }
     
     // Try OpenAI for Australian travel time estimation if Google Maps failed
-    if (travelTimeMinutes === 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your_openai_key_here') {
+    if (travelTimeMinutes === 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'process.env.GOOGLE_MAPS_API_KEY') {
       try {
         const prompt = `Calculate accurate driving time in minutes from "${formattedOrigin}" to "${formattedDestination}" in Brisbane, Australia. 
 
@@ -1313,6 +1313,11 @@ async function calculateGoogleMapsDistance(origin, destination) {
     const fetch = (await import('node-fetch')).default;
     const apiKey = process.env.GOOGLE_MAPS_API_KEY;
     
+    if (!apiKey || apiKey === 'your_google_maps_key_here') {
+      console.log('calculateGoogleMapsDistance: No valid API key configured');
+      return null;
+    }
+    
     const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&units=metric&departure_time=now&traffic_model=best_guess&key=${apiKey}`;
     
     console.log('calculateGoogleMapsDistance: Calling API for', origin, 'to', destination);
@@ -1331,7 +1336,8 @@ async function calculateGoogleMapsDistance(origin, destination) {
         console.log('calculateGoogleMapsDistance: Success', {
           distance: element.distance.text,
           duration: duration.text,
-          minutes: travelTimeMinutes
+          minutes: travelTimeMinutes,
+          withTraffic: !!element.duration_in_traffic
         });
         
         return travelTimeMinutes;
@@ -1341,6 +1347,20 @@ async function calculateGoogleMapsDistance(origin, destination) {
       }
     } else {
       console.log('calculateGoogleMapsDistance: API error', data.status, data.error_message);
+      
+      // Provide specific guidance for common errors
+      if (data.status === 'REQUEST_DENIED') {
+        console.log('🔧 GOOGLE MAPS SETUP REQUIRED:');
+        console.log('   1. Enable billing: https://console.cloud.google.com/billing');
+        console.log('   2. Enable Distance Matrix API: https://console.cloud.google.com/apis/library/distancematrix.googleapis.com');
+        console.log('   3. Enable Geocoding API: https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com');
+        console.log('   4. Run test: node test-google-maps-travel-time.js');
+      } else if (data.status === 'OVER_DAILY_LIMIT') {
+        console.log('⚠️ Google Maps daily quota exceeded, using OpenAI fallback');
+      } else if (data.status === 'OVER_QUERY_LIMIT') {
+        console.log('⚠️ Google Maps rate limit exceeded, using OpenAI fallback');
+      }
+      
       return null;
     }
   } catch (error) {
@@ -1785,6 +1805,10 @@ async function handleInput(input, confidence = 1.0) {
         break;
         
       case 'special_instructions':
+        response = await collectSpecialInstructions(input);
+        break;
+        
+      case 'collect_special_instructions':
         response = await collectSpecialInstructions(input);
         break;
         
@@ -2571,9 +2595,15 @@ async function collectClientDetails(input) {
           return response;
         }
         
-        // Accept the name directly without confirmation for better flow
-        stateMachine.clientData.name = extractedName;
-        console.log('✅ Name accepted:', extractedName);
+        // 🔥 CRITICAL FIX: Assign phone number from caller
+        if (stateMachine.callerPhoneNumber && !stateMachine.clientData.phone) {
+          stateMachine.clientData.phone = stateMachine.callerPhoneNumber;
+          console.log('📱 Phone auto-assigned from caller:', stateMachine.callerPhoneNumber);
+        }
+        
+        // Request spelling confirmation for the name
+        console.log('✅ Name extracted, requesting confirmation:', extractedName);
+        return await requestDetailConfirmation('name', extractedName);
         
         // Move to next detail
         const nextDetail = details.find(d => !stateMachine.clientData[d]);
@@ -2588,16 +2618,22 @@ async function collectClientDetails(input) {
         }
         
       } else if (missingDetail === 'email') {
-        // Handle email collection
+        // Handle email collection with spelling confirmation
         const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
         const extractedEmail = cleanedInput.match(emailPattern);
         
         if (extractedEmail && extractedEmail[0]) {
-          stateMachine.clientData.email = extractedEmail[0];
-          console.log('✅ Email accepted:', extractedEmail[0]);
+          // Request spelling confirmation for the email
+          console.log('✅ Email extracted, requesting spelling confirmation:', extractedEmail[0]);
+          return await requestDetailConfirmation('email', extractedEmail[0]);
         } else {
-          stateMachine.clientData.temp_email = cleanedInput;
-          return await requestDetailConfirmation('email', cleanedInput);
+          // Email format not recognized, ask again
+          const response = await getResponse(
+            "I didn't catch your email address clearly. Could you please provide your email address again, speaking clearly?",
+            stateMachine.conversationHistory
+          );
+          stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+          return response;
         }
       } else if (missingDetail === 'address') {
         // Handle address collection - be more permissive with Brisbane addresses
@@ -2621,6 +2657,80 @@ async function collectClientDetails(input) {
           
           stateMachine.clientData.address = formattedAddress;
           console.log('✅ Address accepted:', formattedAddress);
+          
+          // 🚗 IMMEDIATELY CALCULATE TRAVEL TIME AND DETERMINE EARLIEST APPOINTMENT
+          console.log('🧮 Calculating travel time and determining earliest available appointment...');
+          
+          try {
+            // Get last job location (Location X)
+            const lastJobLocation = "142 Queen Street, Brisbane, QLD, Australia"; // Default last job location
+            const customerLocation = formattedAddress; // Location Y (customer's address)
+            
+            console.log(`📍 Travel calculation: ${lastJobLocation} → ${customerLocation}`);
+            
+            // Calculate travel time from X to Y
+            const travelTime = await calculateTravelTime(lastJobLocation, customerLocation);
+            console.log(`🚗 Travel time calculated: ${travelTime}`);
+            
+            // Parse travel time to get minutes
+            const travelMinutes = extractMinutesFromTravelTime(travelTime);
+            console.log(`⏱️ Travel time in minutes: ${travelMinutes}`);
+            
+            // Calculate total buffer time
+            const jobCompletionBuffer = 30; // 30 minutes constant for job completion
+            const totalBufferMinutes = jobCompletionBuffer + travelMinutes;
+            
+            console.log(`📊 Scheduling calculation:`);
+            console.log(`   Job completion buffer: ${jobCompletionBuffer} minutes`);
+            console.log(`   Travel time (X→Y): ${travelMinutes} minutes`);
+            console.log(`   Total buffer needed: ${totalBufferMinutes} minutes`);
+            
+            // Calculate earliest available appointment time
+            const now = new Date();
+            const earliestTime = new Date(now.getTime() + totalBufferMinutes * 60 * 1000);
+            
+            // Round to next reasonable appointment slot (e.g., next 30-minute interval)
+            const roundedTime = roundToNextAppointmentSlot(earliestTime);
+            
+            const formattedTime = roundedTime.toLocaleString('en-AU', {
+              timeZone: 'Australia/Brisbane',
+              weekday: 'long',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            });
+            
+            console.log(`🎯 Earliest available appointment: ${formattedTime}`);
+            
+            // Store travel and scheduling information
+            stateMachine.clientData.travelTime = travelTime;
+            stateMachine.clientData.travelMinutes = travelMinutes;
+            stateMachine.clientData.earliestAppointment = roundedTime;
+            stateMachine.clientData.totalBufferMinutes = totalBufferMinutes;
+            
+            // Ask if customer has any special instructions before proposing appointment
+            const response = await getResponse(
+              `Perfect! I've got your address. Before I book your appointment, do you have any special instructions for the plumber? For example, do you have any pets, or is there anything specific about accessing your property that we should know?`,
+              stateMachine.conversationHistory
+            );
+            stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+            
+            // Set state to collect special instructions
+            stateMachine.currentState = 'collect_special_instructions';
+            return response;
+            
+          } catch (travelError) {
+            console.error('❌ Travel time calculation failed:', travelError.message);
+            // Continue with default scheduling if travel calculation fails
+            const response = await getResponse(
+              `Perfect! I've got your address. Before I book your appointment, do you have any special instructions for the plumber?`,
+              stateMachine.conversationHistory
+            );
+            stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+            stateMachine.currentState = 'collect_special_instructions';
+            return response;
+          }
+          
         } else {
           stateMachine.clientData.temp_address = cleanedInput;
           return await requestDetailConfirmation('address', cleanedInput);
@@ -4751,12 +4861,35 @@ function isValidName(candidateName) {
   const words = name.trim().split(/\s+/);
   const hasValidWord = words.some(word => /^[a-zA-ZÀ-ÿĀ-žА-я\-'\.]+$/.test(word));
   
-  // Exclude obvious non-names
-  const excludedWords = ['hello', 'hi', 'yes', 'no', 'ok', 'okay', 'thanks', 'thank', 'please', 'help', 'urgent', 'asap', 'today', 'tomorrow', 'morning', 'afternoon', 'evening', 'problem', 'issue', 'broken', 'toilet', 'sink', 'drain', 'pipe', 'water', 'plumber', 'plumbing', 'appointment', 'book', 'schedule'];
-  const lowerName = name.toLowerCase();
-  const containsExcluded = excludedWords.some(word => lowerName === word || lowerName.includes(` ${word} `) || lowerName.startsWith(`${word} `) || lowerName.endsWith(` ${word}`));
+  // Exclude obvious non-names and conversational phrases
+  const excludedWords = ['hello', 'hi', 'yes', 'no', 'ok', 'okay', 'thanks', 'thank', 'please', 'help', 'urgent', 'asap', 'today', 'tomorrow', 'morning', 'afternoon', 'evening', 'problem', 'issue', 'broken', 'toilet', 'sink', 'drain', 'pipe', 'water', 'plumber', 'plumbing', 'appointment', 'book', 'schedule', 'ready', 'provide', 'details', 'give', 'tell', 'information', 'data', 'waiting', 'prepared'];
   
-  return hasValidWord && !containsExcluded;
+  // Also check for conversational phrases that are definitely not names
+  const conversationalPhrases = [
+    'ready to provide',
+    'i am ready',
+    'give you my',
+    'tell you my',
+    'provide my',
+    'share my',
+    'here are my',
+    'waiting to give',
+    'prepared to share'
+  ];
+  
+  const lowerName = name.toLowerCase();
+  const containsExcluded = excludedWords.some(word => 
+    lowerName === word || 
+    lowerName.includes(` ${word} `) || 
+    lowerName.startsWith(`${word} `) || 
+    lowerName.endsWith(` ${word}`)
+  );
+  
+  const isConversationalPhrase = conversationalPhrases.some(phrase => 
+    lowerName.includes(phrase)
+  );
+  
+  return hasValidWord && !containsExcluded && !isConversationalPhrase;
 }
 
 // Add emotional intelligence to responses
@@ -4826,6 +4959,8 @@ async function sendConfirmationEmail() {
       referenceNumber: `USHFX${phoneDigits}`,
       estimated_duration: estimatedDuration,
       travel_time: travelTime,
+      totalBufferMinutes: stateMachine.clientData.totalBufferMinutes || 'Not calculated',
+      travelMinutes: stateMachine.clientData.travelMinutes || 'Not calculated',
       service_category: getServiceCategory(stateMachine.clientData.issueDescription)
     };
     
@@ -5091,6 +5226,140 @@ async function analyzeFastInput(input) {
   }
 }
 
+/**
+ * Extract minutes from travel time string
+ * @param {string|number} travelTime - Travel time in various formats
+ * @returns {number} Travel time in minutes
+ */
+function extractMinutesFromTravelTime(travelTime) {
+  if (typeof travelTime === 'number') {
+    return travelTime;
+  }
+  
+  if (typeof travelTime === 'string') {
+    // Handle various formats like "25 minutes", "1 hour 15 minutes", "45-60 minutes"
+    const timeStr = travelTime.toLowerCase();
+    
+    // Extract hours and minutes
+    const hourMatch = timeStr.match(/(\d+)\s*(?:hour|hr)s?/);
+    const minuteMatch = timeStr.match(/(\d+)\s*(?:minute|min)s?/);
+    
+    let totalMinutes = 0;
+    
+    if (hourMatch) {
+      totalMinutes += parseInt(hourMatch[1]) * 60;
+    }
+    
+    if (minuteMatch) {
+      totalMinutes += parseInt(minuteMatch[1]);
+    }
+    
+    // Handle range formats like "45-60 minutes" - take the middle value
+    if (totalMinutes === 0) {
+      const rangeMatch = timeStr.match(/(\d+)\s*-\s*(\d+)\s*(?:minute|min)s?/);
+      if (rangeMatch) {
+        const min = parseInt(rangeMatch[1]);
+        const max = parseInt(rangeMatch[2]);
+        totalMinutes = Math.round((min + max) / 2);
+      }
+    }
+    
+    // If still no match, try to extract any number
+    if (totalMinutes === 0) {
+      const numberMatch = timeStr.match(/(\d+)/);
+      if (numberMatch) {
+        totalMinutes = parseInt(numberMatch[1]);
+      }
+    }
+    
+    return totalMinutes || 30; // Default to 30 minutes if can't parse
+  }
+  
+  return 30; // Default fallback
+}
+
+/**
+ * Round time to next reasonable appointment slot (30-minute intervals)
+ * @param {Date} time - Time to round
+ * @returns {Date} Rounded time
+ */
+function roundToNextAppointmentSlot(time) {
+  const rounded = new Date(time);
+  
+  // Round to next 30-minute interval
+  const minutes = rounded.getMinutes();
+  if (minutes === 0) {
+    // Already on the hour
+  } else if (minutes <= 30) {
+    rounded.setMinutes(30, 0, 0);
+  } else {
+    rounded.setHours(rounded.getHours() + 1);
+    rounded.setMinutes(0, 0, 0);
+  }
+  
+  // Ensure it's during business hours (7 AM - 6 PM)
+  const hour = rounded.getHours();
+  if (hour < 7) {
+    rounded.setHours(7, 0, 0, 0);
+  } else if (hour >= 18) {
+    // Move to next day at 7 AM
+    rounded.setDate(rounded.getDate() + 1);
+    rounded.setHours(7, 0, 0, 0);
+  }
+  
+  return rounded;
+}
+
+/**
+ * Handle special instructions collection and then propose appointment
+ */
+async function collectSpecialInstructions(input) {
+  console.log('collectSpecialInstructions: Input received', input);
+  
+  // Store special instructions
+  if (input && input.trim()) {
+    stateMachine.clientData.specialInstructions = input.trim();
+    console.log('✅ Special instructions recorded:', input.trim());
+  } else {
+    stateMachine.clientData.specialInstructions = 'No special instructions';
+    console.log('✅ No special instructions provided');
+  }
+  
+  // Now propose the appointment with calculated travel time
+  const travelTime = stateMachine.clientData.travelTime || '30 minutes';
+  const earliestTime = stateMachine.clientData.earliestAppointment || new Date(Date.now() + 60 * 60 * 1000);
+  const totalBuffer = stateMachine.clientData.totalBufferMinutes || 60;
+  
+  const formattedTime = earliestTime.toLocaleString('en-AU', {
+    timeZone: 'Australia/Brisbane',
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+  
+  console.log('🎯 Proposing appointment with travel calculation:');
+  console.log(`   Travel time: ${travelTime}`);
+  console.log(`   Total buffer: ${totalBuffer} minutes`);
+  console.log(`   Proposed time: ${formattedTime}`);
+  
+  // Set state to await booking confirmation
+  stateMachine.currentState = 'confirm_appointment';
+  
+  const response = await getResponse(
+    `Perfect! Based on the travel time calculation from our previous job location to your address (${travelTime}), ` +
+    `plus 30 minutes for job completion, the earliest available appointment is ${formattedTime}. ` +
+    `This ensures our plumber arrives with adequate time for your ${stateMachine.clientData.issueDescription || 'plumbing service'}. ` +
+    `Would you like me to book this appointment for you?`,
+    stateMachine.conversationHistory
+  );
+  
+  stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+  return response;
+}
+
 module.exports = { 
   handleInput, 
   stateMachine, 
@@ -5104,6 +5373,9 @@ module.exports = {
   generatePhoneBasedReference,
   extractNameFromInput,
   isValidName,
+  extractMinutesFromTravelTime,
+  roundToNextAppointmentSlot,
+  collectSpecialInstructions,
   getStateMachine: () => stateMachine,
   resetStateMachine: () => {
     stateMachine.currentState = 'start';

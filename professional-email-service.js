@@ -34,6 +34,9 @@ async function sendBookingConfirmationEmail(bookingDetails) {
       issue_description: bookingDetails.issue || 'General plumbing service',
       estimated_duration: bookingDetails.estimated_duration || '1-2 hours',
       travel_time: bookingDetails.travel_time || '30-45 minutes',
+      total_buffer_minutes: bookingDetails.totalBufferMinutes || 'Not calculated',
+      job_completion_buffer: '30 minutes',
+      travel_time_minutes: bookingDetails.travelMinutes || 'Not calculated',
       
       // Appointment Details
       appointment_time: appointmentTime,
