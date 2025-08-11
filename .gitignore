@@ -65,4 +65,33 @@ Thumbs.db
 *.tmp
 *.temp
 
+# Test files
+test-*.js
+*test*.js
+mock-*.js
+simple-*.js
+terminal-*.js
+check-*.js
+live-call-*.js
+
+# Documentation and report files (keep only essential ones)
+*_APPLIED.md
+*_COMPLETE.md
+*_FIXES*.md
+*_REPORT.md
+*_GUIDE.md
+*_STATUS*.md
+*_OPTIMIZATIONS*.md
+LATENCY_OPTIMIZATIONS*.md
+BOOKING_FLOW_FIX*.md
+EMAIL_STATUS*.md
+TERMINAL_CHAT*.md
+
+# Service files that are tests
+env-checker.js
+fix-summary.js
+notifications.js
+professional-email-service.js
+simple-email-service.js
+
 

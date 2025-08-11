@@ -6,13 +6,44 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Add caching for NLP responses
+// Add caching for NLP responses and performance tracking
 const nlpCache = new Map();
+const responseTimeTracker = {
+  times: [],
+  addTime: function(time) {
+    this.times.push(time);
+    if (this.times.length > 100) this.times.shift(); // Keep last 100
+  },
+  getAverage: function() {
+    return this.times.reduce((a, b) => a + b, 0) / this.times.length;
+  }
+};
+
+// Preload common responses for instant replies
+const preloadedResponses = new Map([
+  ['hello', 'Hello! How can I help you with your plumbing needs today?'],
+  ['hi', 'Hi there! What plumbing issue can I help you with?'],
+  ['yes', 'Great! Let me help you with that.'],
+  ['no', 'No problem at all. Is there anything else I can help you with?'],
+  ['thank you', 'You\'re very welcome! Happy to help.'],
+  ['thanks', 'My pleasure! Anything else I can assist with?'],
+]);
+
+// Initialize cache with preloaded responses
+preloadedResponses.forEach((value, key) => {
+  nlpCache.set(key, value);
+});
 
 const BRISBANE_TZ = 'Australia/Brisbane';
 const currentDate = new Date().toLocaleDateString('en-US', { timeZone: BRISBANE_TZ, weekday: 'long', month: 'long', day: 'numeric' });
 
 const systemPrompt = `You are Robyn, a friendly, energetic voice agent for Assure Fix Plumbing in Australia. Today's date is ${currentDate} Brisbane time.
+
+IMPORTANT CONVERSATION RULES:
+- You are ALREADY introduced as Robyn - DO NOT repeat your name unless specifically asked
+- DO NOT say "My name is Robyn" in every response
+- Only introduce yourself in the first greeting or when explicitly asked
+- Focus on helping the customer, not repeating who you are
 
 CORE CAPABILITIES:
 - Understand and categorize plumbing issues accurately
@@ -29,6 +60,7 @@ CONVERSATION STYLE:
 - Provide reassurance for urgent issues
 - Keep responses concise but helpful
 - Ask every question one by one
+- AVOID repeating your name unnecessarily
 
 PLUMBING EXPERTISE:
 - Understand technical plumbing terms and issues
@@ -56,15 +88,20 @@ EMERGENCY HANDLING:
 - Prioritize emergency bookings appropriately
 - Show appropriate concern and urgency
 
-Keep responses natural, helpful, don't rush, and focused on solving the customer's plumbing needs using less words.`;
+Keep responses natural, helpful, don't rush, and focused on solving the customer's plumbing needs using less words. NEVER repeat your name unless specifically asked.`;
 
 async function getResponse(prompt, conversationHistory = []) {
-  console.log('getResponse: Called with prompt', prompt);
+  const startTime = Date.now();
+  console.log('getResponse: Called with prompt', prompt.substring(0, 50) + '...');
   
-  // Check cache for simple prompts
+  // Only cache very simple, static responses - not complex prompts
   const cacheKey = prompt.toLowerCase().trim();
-  if (nlpCache.has(cacheKey)) {
-    console.log('NLP: Using cached response');
+  const isSimplePrompt = prompt.length < 50 && !prompt.includes('\n') && !prompt.includes('Perfect!') && !prompt.includes('Thank you!');
+  
+  if (isSimplePrompt && nlpCache.has(cacheKey)) {
+    const endTime = Date.now();
+    responseTimeTracker.addTime(endTime - startTime);
+    console.log('NLP: Using cached response (', endTime - startTime, 'ms)');
     return nlpCache.get(cacheKey);
   }
   
@@ -77,27 +114,36 @@ async function getResponse(prompt, conversationHistory = []) {
       ...conversationHistory,
       { role: 'user', content: prompt }
     ];
+    
+    // LATENCY OPTIMIZATION: Use faster model and reduce tokens
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: 'gpt-4o-mini', // Faster, cheaper model
       messages: messages,
-      max_tokens: 150,
-      temperature: 0.5,
+      max_tokens: 100, // Reduced from 150
+      temperature: 0.3, // Reduced for more predictable, faster responses
+      stream: false, // Ensure we get the full response at once
     });
     const response = completion.choices[0].message.content.trim();
     
-    // Cache the response
-    nlpCache.set(cacheKey, response);
-    if (nlpCache.size > 100) {
-      const firstKey = nlpCache.keys().next().value;
-      nlpCache.delete(firstKey);
+    // Only cache simple responses to avoid inappropriate reuse
+    if (isSimplePrompt && response.length < 100) {
+      nlpCache.set(cacheKey, response);
+      if (nlpCache.size > 200) { // Increased cache size
+        const firstKey = nlpCache.keys().next().value;
+        nlpCache.delete(firstKey);
+      }
     }
     
-    console.log('getResponse: Response', response);
+    const endTime = Date.now();
+    responseTimeTracker.addTime(endTime - startTime);
+    console.log('getResponse: Response', response, '(', endTime - startTime, 'ms)');
     return response;
   } catch (error) {
-    console.error('getResponse: OpenAI error', error.message, error.stack);
+    const endTime = Date.now();
+    responseTimeTracker.addTime(endTime - startTime);
+    console.error('getResponse: OpenAI error', error.message, '(', endTime - startTime, 'ms)');
     return "I'm sorry, I didn't catch that. Could you say it again, please?";
   }
 }
 
-module.exports = { getResponse };
+module.exports = { getResponse, responseTimeTracker, nlpCache };
