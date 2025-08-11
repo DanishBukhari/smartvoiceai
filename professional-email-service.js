@@ -22,6 +22,28 @@ async function sendBookingConfirmationEmail(bookingDetails) {
     // Generate reference number if not provided
     const referenceNumber = bookingDetails.referenceNumber || `PLB-${Date.now().toString().slice(-6)}`;
 
+    // Calculate and format travel time display
+    const travelMinutes = bookingDetails.travelMinutes || 0;
+    const totalBufferMinutes = bookingDetails.totalBufferMinutes || 0;
+    const jobCompletionBuffer = 30; // Standard 30-minute job completion buffer
+    
+    // Format travel time for display
+    const formatTravelTime = (minutes) => {
+      if (minutes <= 0) return '30-45 minutes (estimated)';
+      if (minutes <= 15) return `${minutes} minutes`;
+      if (minutes <= 30) return `${minutes} minutes`;
+      if (minutes <= 60) return `${minutes} minutes`;
+      return `${Math.round(minutes)} minutes`;
+    };
+    
+    // Format total time estimation
+    const formatTotalEstimation = (totalBuffer, jobBuffer, travelMins) => {
+      if (totalBuffer > 0 && travelMins > 0) {
+        return `${totalBuffer} minutes total (${jobBuffer} min service + ${travelMins} min travel)`;
+      }
+      return '1-2 hours (estimated)';
+    };
+
     // Prepare template parameters for the professional HTML template
     const templateParams = {
       // Customer Details
@@ -32,11 +54,11 @@ async function sendBookingConfirmationEmail(bookingDetails) {
       
       // Service Details
       issue_description: bookingDetails.issue || 'General plumbing service',
-      estimated_duration: bookingDetails.estimated_duration || '1-2 hours',
-      travel_time: bookingDetails.travel_time || '30-45 minutes',
-      total_buffer_minutes: bookingDetails.totalBufferMinutes || 'Not calculated',
-      job_completion_buffer: '30 minutes',
-      travel_time_minutes: bookingDetails.travelMinutes || 'Not calculated',
+      estimated_duration: formatTotalEstimation(totalBufferMinutes, jobCompletionBuffer, travelMinutes),
+      travel_time: formatTravelTime(travelMinutes),
+      total_buffer_minutes: totalBufferMinutes > 0 ? `${totalBufferMinutes} minutes` : 'Calculating...',
+      job_completion_buffer: `${jobCompletionBuffer} minutes`,
+      travel_time_minutes: travelMinutes > 0 ? `${travelMinutes} minutes` : 'Calculating...',
       
       // Appointment Details
       appointment_time: appointmentTime,
