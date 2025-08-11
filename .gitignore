@@ -76,7 +76,6 @@ live-call-*.js
 
 # Documentation and report files (keep only essential ones)
 *_APPLIED.md
-*_COMPLETE.md
 *_FIXES*.md
 *_REPORT.md
 *_GUIDE.md
@@ -90,8 +89,6 @@ TERMINAL_CHAT*.md
 # Service files that are tests
 env-checker.js
 fix-summary.js
-notifications.js
 
-simple-email-service.js
 
 
