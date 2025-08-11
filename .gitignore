@@ -85,7 +85,8 @@ LATENCY_OPTIMIZATIONS*.md
 BOOKING_FLOW_FIX*.md
 EMAIL_STATUS*.md
 TERMINAL_CHAT*.md
-
+BOOKING_SYSTEM_SUCCESS*.md
+GOOGLE_MAPS_SETUP_GUIDE*.md
 # Service files that are tests
 env-checker.js
 fix-summary.js
