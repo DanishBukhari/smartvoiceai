@@ -3,6 +3,7 @@ const { getResponse } = require('./nlp');
 const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./outlook');
 const { createOrUpdateContact } = require('./ghl');
 const { notifyError, notifyWarning, notifySuccess } = require('./notifications');
+const { sendBookingConfirmationEmail, sendSMSConfirmation } = require('./professional-email-service');
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
@@ -1190,19 +1191,30 @@ async function calculateTravelTime(origin, destination) {
     // Try OpenAI for Australian travel time estimation if Google Maps failed
     if (travelTimeMinutes === 0 && process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY !== 'your_openai_key_here') {
       try {
-        const prompt = `Calculate driving time in minutes from "${formattedOrigin}" to "${formattedDestination}" in Brisbane, Australia. Consider:
-- Real driving distances and routes
-- Average traffic conditions during business hours
-- Speed limits in Australian urban/suburban areas
-- Brisbane's road network and geography
+        const prompt = `Calculate accurate driving time in minutes from "${formattedOrigin}" to "${formattedDestination}" in Brisbane, Australia. 
 
-Return ONLY the number of minutes as an integer (e.g., "25" for 25 minutes).`;
+IMPORTANT: Consider Brisbane's actual road network and traffic patterns:
+- Brisbane CBD to suburbs: 15-45 minutes depending on distance
+- Cross-city travel (e.g., north to south): 25-60 minutes  
+- Airport to CBD: 25-35 minutes
+- Inner suburbs to each other: 10-25 minutes
+- Adjacent suburbs: 8-15 minutes
+- Same suburb/area: 5-10 minutes
+
+Factors to include:
+- Real Brisbane driving distances and main roads (not straight line)
+- Business hours traffic (moderate congestion)
+- Speed limits: 50-60 km/h urban, 70-80 km/h arterials, 100 km/h highways
+- Brisbane River crossings and bridge delays
+- Hills and terrain in western suburbs
+
+Return ONLY the number of minutes as an integer. Be realistic - Brisbane metro area travel rarely exceeds 60 minutes.`;
 
         const response = await openai.chat.completions.create({
           model: 'gpt-4o-mini', // Faster model for travel calculations
           messages: [{ role: 'user', content: prompt }],
-          max_tokens: 10,
-          temperature: 0.1,
+          max_tokens: 15,
+          temperature: 0.2, // Slightly higher for more realistic variation
         });
         
         const aiResult = parseInt(response.choices[0].message.content.trim());
@@ -1522,21 +1534,49 @@ function calculateAustralianDistanceBasedTime(origin, destination) {
     
     console.log('calculateAustralianDistanceBasedTime: Distance calculated', distance, 'km');
     
-    // Australian speed categories based on distance and typical routes
+    // Brisbane-specific speed adjustments based on real travel patterns
     let averageSpeed;
-    if (distance <= 3) {
-      averageSpeed = 25; // Inner city/suburban with traffic lights
-    } else if (distance <= 10) {
-      averageSpeed = 35; // Suburban with some arterial roads
-    } else if (distance <= 30) {
-      averageSpeed = 50; // Mix of suburban and highway
-    } else if (distance <= 100) {
-      averageSpeed = 70; // Primarily highway driving
+    let timeAdjustment = 1.0; // Multiplier for Brisbane-specific factors
+    
+    // Check if both locations are in Brisbane area (latitude between -27.8 and -27.2)
+    const isBrisbaneRoute = originCoords.lat >= -27.8 && originCoords.lat <= -27.2 && 
+                           destCoords.lat >= -27.8 && destCoords.lat <= -27.2;
+    
+    if (isBrisbaneRoute) {
+      // Brisbane-specific routing
+      if (distance <= 2) {
+        averageSpeed = 20; // Inner Brisbane with traffic lights, narrow streets
+        timeAdjustment = 1.2; // Allow for parking, access
+      } else if (distance <= 5) {
+        averageSpeed = 30; // Brisbane suburbs, some arterials
+        timeAdjustment = 1.1; // Brisbane traffic patterns
+      } else if (distance <= 15) {
+        averageSpeed = 45; // Cross-Brisbane, main roads, some highway
+        timeAdjustment = 1.3; // Bridge crossings, traffic congestion
+      } else if (distance <= 30) {
+        averageSpeed = 60; // Brisbane to outer suburbs, mostly highway
+        timeAdjustment = 1.1; // Gateway Motorway, Pacific Motorway
+      } else {
+        averageSpeed = 70; // Long distance from Brisbane
+        timeAdjustment = 1.0;
+      }
     } else {
-      averageSpeed = 80; // Long distance highway
+      // General Australian routing (non-Brisbane)
+      if (distance <= 3) {
+        averageSpeed = 25; // Inner city/suburban with traffic lights
+      } else if (distance <= 10) {
+        averageSpeed = 35; // Suburban with some arterial roads
+      } else if (distance <= 30) {
+        averageSpeed = 50; // Mix of suburban and highway
+      } else if (distance <= 100) {
+        averageSpeed = 70; // Primarily highway driving
+      } else {
+        averageSpeed = 80; // Long distance highway
+      }
     }
     
-    const timeMinutes = Math.round((distance / averageSpeed) * 60);
+    const baseTimeMinutes = (distance / averageSpeed) * 60;
+    const timeMinutes = Math.round(baseTimeMinutes * timeAdjustment);
     const adjustedTime = Math.max(5, timeMinutes); // Minimum 5 minutes for any trip
     
     console.log('calculateAustralianDistanceBasedTime: Calculated time', {
@@ -2516,20 +2556,79 @@ async function collectClientDetails(input) {
     if (missingDetail) {
       console.log(`collectClientDetails: Processing ${missingDetail} = ${input}`);
       const cleanedInput = validateAndCorrectInput(input.trim());
-      if (missingDetail === 'name' && !isValidName(cleanedInput)) {
-        const response = await getResponse(
-          "That doesn't seem like a valid name. Could you please provide your full name?",
-          stateMachine.conversationHistory
-        );
-        stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-        return response;
-      }
-      if (missingDetail === 'address') {
-        stateMachine.clientData.temp_address = combineAddresses(stateMachine.clientData.address, cleanedInput);
+      
+      if (missingDetail === 'name') {
+        // Extract name from the input more intelligently
+        const extractedName = extractNameFromInput(cleanedInput);
+        console.log('collectClientDetails: Extracted name:', extractedName);
+        
+        if (!extractedName || !isValidName(extractedName)) {
+          const response = await getResponse(
+            "I didn't quite catch your name clearly. Could you please tell me your first and last name?",
+            stateMachine.conversationHistory
+          );
+          stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+          return response;
+        }
+        
+        // Accept the name directly without confirmation for better flow
+        stateMachine.clientData.name = extractedName;
+        console.log('✅ Name accepted:', extractedName);
+        
+        // Move to next detail
+        const nextDetail = details.find(d => !stateMachine.clientData[d]);
+        if (nextDetail) {
+          const prompts = {
+            email: "Great! Now, could I have your email address?",
+            address: "Perfect! And what's your complete address including street number, street name, suburb, state, and postcode?",
+          };
+          const response = await getResponse(prompts[nextDetail], stateMachine.conversationHistory);
+          stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+          return response;
+        }
+        
+      } else if (missingDetail === 'email') {
+        // Handle email collection
+        const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+        const extractedEmail = cleanedInput.match(emailPattern);
+        
+        if (extractedEmail && extractedEmail[0]) {
+          stateMachine.clientData.email = extractedEmail[0];
+          console.log('✅ Email accepted:', extractedEmail[0]);
+        } else {
+          stateMachine.clientData.temp_email = cleanedInput;
+          return await requestDetailConfirmation('email', cleanedInput);
+        }
+      } else if (missingDetail === 'address') {
+        // Handle address collection - be more permissive with Brisbane addresses
+        const addressPatterns = [
+          /\d+\s+[a-zA-Z\s]+(?:street|st|road|rd|avenue|ave|court|ct|drive|dr|place|pl|close|way|crescent|cres),?\s*[a-zA-Z\s]+,?\s*(?:qld|queensland|brisbane)/i,
+          /[a-zA-Z\s]+,\s*(?:brisbane|qld|queensland)/i,
+          /\d+\s+[a-zA-Z\s]+,\s*[a-zA-Z\s]+/i // Basic pattern for any address with number + street + suburb
+        ];
+        
+        const hasValidAddressPattern = addressPatterns.some(pattern => pattern.test(cleanedInput));
+        
+        if (hasValidAddressPattern || cleanedInput.toLowerCase().includes('brisbane') || cleanedInput.toLowerCase().includes('qld')) {
+          // Format the address to include Brisbane, QLD, Australia if not present
+          let formattedAddress = cleanedInput;
+          if (!formattedAddress.toLowerCase().includes('australia')) {
+            formattedAddress += ', Australia';
+          }
+          if (!formattedAddress.toLowerCase().includes('qld') && !formattedAddress.toLowerCase().includes('queensland')) {
+            formattedAddress = formattedAddress.replace(', Australia', ', QLD, Australia');
+          }
+          
+          stateMachine.clientData.address = formattedAddress;
+          console.log('✅ Address accepted:', formattedAddress);
+        } else {
+          stateMachine.clientData.temp_address = cleanedInput;
+          return await requestDetailConfirmation('address', cleanedInput);
+        }
       } else {
         stateMachine.clientData[`temp_${missingDetail}`] = cleanedInput;
+        return await requestDetailConfirmation(missingDetail, stateMachine.clientData[`temp_${missingDetail}`]);
       }
-      return await requestDetailConfirmation(missingDetail, stateMachine.clientData[`temp_${missingDetail}`]);
     }
   }
   
@@ -2550,9 +2649,16 @@ async function collectClientDetails(input) {
   } else {
     // All details collected, transition to booking
     console.log('collectClientDetails: All details collected, transitioning to booking');
+    console.log('📋 Final customer data:', {
+      name: stateMachine.clientData.name,
+      email: stateMachine.clientData.email, 
+      address: stateMachine.clientData.address,
+      issue: stateMachine.clientData.issueDescription
+    });
+    
     stateMachine.currentState = 'book_appointment';
-    stateMachine.awaitingAddress = false;
-    stateMachine.awaitingTime = true;
+    stateMachine.awaitingConfirmation = false;
+    stateMachine.pendingConfirmation = null;
     
     // Validate address format
     const isValidAddress = stateMachine.clientData.address &&
@@ -2768,12 +2874,42 @@ async function handleAppointmentBooking(input) {
 
 async function confirmSlot(input) {
   console.log('confirmSlot: User response', input);
-  if (input.toLowerCase().includes('yes') || input.toLowerCase().includes('okay')) {
-    stateMachine.currentState = 'special_instructions';
-    const response = await getResponse("Great! Any special instructions, like gate codes or security details?", stateMachine.conversationHistory);
-    stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-    console.log('confirmSlot: Asking for instructions', response);
-    return response;
+  
+  // Check if user is providing details instead of confirming
+  const emailPattern = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/;
+  const addressPattern = /\d+\s+[a-zA-Z\s]+,?\s*[a-zA-Z\s]*|[a-zA-Z\s]+\s+street|[a-zA-Z\s]+\s+road|[a-zA-Z\s]+\s+avenue/i;
+  const namePattern = /^[a-zA-Z\s]+$/;
+  
+  if (emailPattern.test(input)) {
+    console.log('confirmSlot: Email detected, switching to detail collection');
+    stateMachine.currentState = 'collect_details';
+    return await collectClientDetails(input);
+  } else if (addressPattern.test(input)) {
+    console.log('confirmSlot: Address detected, switching to detail collection');
+    stateMachine.currentState = 'collect_details';
+    return await collectClientDetails(input);
+  } else if (namePattern.test(input) && input.split(' ').length >= 2) {
+    console.log('confirmSlot: Name detected, switching to detail collection');
+    stateMachine.currentState = 'collect_details';
+    return await collectClientDetails(input);
+  } else if (input.toLowerCase().includes('yes') || input.toLowerCase().includes('okay')) {
+    // User confirmed slot, check if we have all details
+    const missingDetails = [];
+    if (!stateMachine.clientData.name) missingDetails.push('name');
+    if (!stateMachine.clientData.email) missingDetails.push('email');
+    if (!stateMachine.clientData.address) missingDetails.push('address');
+    
+    if (missingDetails.length > 0) {
+      console.log('confirmSlot: Slot confirmed but missing details, switching to collection');
+      stateMachine.currentState = 'collect_details';
+      return await collectClientDetails('');
+    } else {
+      console.log('confirmSlot: Slot confirmed with all details, asking for instructions');
+      stateMachine.currentState = 'special_instructions';
+      const response = await getResponse("Great! Any special instructions, like gate codes or security details?", stateMachine.conversationHistory);
+      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+      return response;
+    }
   } else {
     stateMachine.currentState = 'book_appointment';
     const response = await getResponse("No worries! When would you prefer instead?", stateMachine.conversationHistory);
@@ -4427,69 +4563,200 @@ function extractCustomerDataFromHistory() {
 }
 
 // NEW: Helper function to validate if a string is actually a name
+// Helper function to extract name from speech input
+function extractNameFromInput(input) {
+  if (!input || typeof input !== 'string') return null;
+  
+  let name = input.trim();
+  
+  // Common patterns for name introductions
+  const namePatterns = [
+    /(?:my name is|i'm|i am|this is|call me|it's)\s+([a-zA-Z\s\-'\.]+?)(?:\s*\.?$|,|\sand\s)/i,
+    /^([a-zA-Z\-'\.\s]+)\s*\.?$/i, // Just the name
+  ];
+  
+  for (const pattern of namePatterns) {
+    const match = name.match(pattern);
+    if (match && match[1]) {
+      name = match[1].trim();
+      break;
+    }
+  }
+  
+  // Clean up common speech-to-text artifacts
+  name = name
+    .replace(/\s*space\s*/gi, ' ')  // Remove "space" words
+    .replace(/\s*\d+\s*/g, ' ')     // Remove numbers (except in context)
+    .replace(/\s+/g, ' ')           // Normalize spaces
+    .trim();
+  
+  // Convert common speech patterns to proper names
+  const nameCorrections = {
+    'hira': 'Hira',
+    'hera': 'Hera', 
+    'syeda': 'Syeda',
+    'syeb': 'Syeda',
+    'joanna': 'Joanna',
+    'jonathan': 'Jonathan',
+    'muhammad': 'Muhammad',
+    'ahmed': 'Ahmed',
+    'ali': 'Ali',
+    'fatima': 'Fatima',
+    'aisha': 'Aisha',
+    'omar': 'Omar',
+    'hassan': 'Hassan',
+    'hussain': 'Hussain',
+    'zain': 'Zain',
+    'sara': 'Sara',
+    'noor': 'Noor',
+    'amina': 'Amina',
+    'khalid': 'Khalid',
+    'rashid': 'Rashid',
+    'tariq': 'Tariq',
+    'farah': 'Farah',
+    'layla': 'Layla',
+    'yasmin': 'Yasmin',
+    'maria': 'Maria',
+    'jose': 'José',
+    'pedro': 'Pedro',
+    'carlos': 'Carlos',
+    'fernando': 'Fernando',
+    'diego': 'Diego',
+    'antonio': 'Antonio',
+    'miguel': 'Miguel',
+    'rafael': 'Rafael',
+    'daniel': 'Daniel',
+    'david': 'David',
+    'michael': 'Michael',
+    'john': 'John',
+    'james': 'James',
+    'robert': 'Robert',
+    'william': 'William',
+    'mary': 'Mary',
+    'patricia': 'Patricia',
+    'jennifer': 'Jennifer',
+    'linda': 'Linda',
+    'elizabeth': 'Elizabeth',
+    'barbara': 'Barbara',
+    'susan': 'Susan',
+    'jessica': 'Jessica',
+    'sarah': 'Sarah',
+    'karen': 'Karen',
+    'nancy': 'Nancy',
+    'lisa': 'Lisa',
+    'betty': 'Betty',
+    'helen': 'Helen',
+    'sandra': 'Sandra',
+    'donna': 'Donna',
+    'carol': 'Carol',
+    'ruth': 'Ruth',
+    'sharon': 'Sharon',
+    'michelle': 'Michelle',
+    'laura': 'Laura',
+    'emily': 'Emily',
+    'kimberly': 'Kimberly',
+    'deborah': 'Deborah',
+    'dorothy': 'Dorothy',
+    'amy': 'Amy',
+    'angela': 'Angela',
+    'ashley': 'Ashley',
+    'brenda': 'Brenda',
+    'emma': 'Emma',
+    'olivia': 'Olivia',
+    'cynthia': 'Cynthia',
+    'marie': 'Marie',
+    'janet': 'Janet',
+    'catherine': 'Catherine',
+    'frances': 'Frances',
+    'christine': 'Christine',
+    'samantha': 'Samantha',
+    'debra': 'Debra',
+    'rachel': 'Rachel',
+    'carolyn': 'Carolyn',
+    'janet': 'Janet',
+    'virginia': 'Virginia',
+    'maria': 'Maria',
+    'heather': 'Heather',
+    'diane': 'Diane',
+    'julie': 'Julie',
+    'joyce': 'Joyce',
+    'victoria': 'Victoria',
+    'kelly': 'Kelly',
+    'christina': 'Christina',
+    'joan': 'Joan',
+    'evelyn': 'Evelyn',
+    'lauren': 'Lauren',
+    'judith': 'Judith',
+    'megan': 'Megan',
+    'cheryl': 'Cheryl',
+    'andrea': 'Andrea',
+    'hannah': 'Hannah',
+    'jacqueline': 'Jacqueline',
+    'martha': 'Martha',
+    'gloria': 'Gloria',
+    'teresa': 'Teresa',
+    'sara': 'Sara',
+    'janice': 'Janice',
+    'marie': 'Marie',
+    'julia': 'Julia',
+    'heather': 'Heather',
+    'diane': 'Diane',
+    'ruth': 'Ruth',
+    'julie': 'Julie',
+    'joyce': 'Joyce',
+    'virginia': 'Virginia'
+  };
+  
+  // Apply corrections and proper case
+  const words = name.toLowerCase().split(' ');
+  const correctedWords = words.map(word => {
+    // Handle hyphenated names
+    if (word.includes('-')) {
+      return word.split('-').map(part => 
+        nameCorrections[part] || part.charAt(0).toUpperCase() + part.slice(1)
+      ).join('-');
+    }
+    // Handle names with apostrophes (O'Connor, D'Angelo)
+    if (word.includes("'")) {
+      return word.split("'").map((part, index) => 
+        index === 0 ? (nameCorrections[part] || part.charAt(0).toUpperCase() + part.slice(1)) :
+        part.charAt(0).toUpperCase() + part.slice(1)
+      ).join("'");
+    }
+    return nameCorrections[word] || word.charAt(0).toUpperCase() + word.slice(1);
+  });
+  
+  return correctedWords.join(' ');
+}
+
 function isValidName(candidateName) {
   if (!candidateName || typeof candidateName !== 'string') return false;
   
-  const name = candidateName.trim().toLowerCase();
+  const name = candidateName.trim();
   
-  // Exclude common non-name words and phrases (exact matches only for short words)
-  const exactExcludedWords = [
-    'hello', 'hi', 'hey', 'good', 'morning', 'afternoon', 'evening', 
-    'broken', 'unusable', 'bathroom', 'kitchen', 'toilet', 'sink', 
-    'drain', 'pipe', 'water', 'clogged', 'blocked', 'leaking',
-    'plumber', 'plumbing', 'urgent', 'help', 'need', 'want', 'please',
-    'thanks', 'thank', 'yes', 'yeah', 'yep', 'no', 'nah', 'ok', 'okay',
-    'constant', 'problem', 'issue', 'trouble', 'emergency', 'book', 'appointment',
-    'something', 'everything', 'nothing', 'anything', 'someone', 'everyone',
-    'nope', 'none', 'not', 'any', 'today', 'tomorrow', 'asap', 'now',
-    'morning', 'afternoon', 'evening', 'night', 'soon', 'later',
-    'this', 'that', 'these', 'those', 'address', 'full', 'email',
-    'gmail', 'outlook', 'yahoo', 'hotmail', 'street', 'road', 'avenue',
-    'the', 'and', 'or', 'but', 'so', 'looking', 'like', 'would', 
-    'could', 'should', 'right', 'away'
-  ];
-  
-  // Special phrases that should never be names (word boundary matches)
-  const excludedPhrases = [
-    'referring to the occasional',
-    'book appointment',
-    'help me',
-    'right away',
-    'looking for'
-  ];
-  
-  // Check exact word matches (split by spaces)
-  const words = name.trim().split(/\s+/);
-  for (const word of words) {
-    if (exactExcludedWords.includes(word)) {
-      return false;
-    }
-  }
-  
-  // Check for excluded phrases
-  for (const phrase of excludedPhrases) {
-    if (name.includes(phrase)) {
-      return false;
-    }
-  }
-  
-  // Must be between 2-30 characters
-  if (name.length < 2 || name.length > 30) return false;
+  // Must be between 1-50 characters (more lenient)
+  if (name.length < 1 || name.length > 50) return false;
   
   // Must contain at least one letter
   if (!/[a-zA-Z]/.test(name)) return false;
   
-  // Should not contain numbers (except maybe in modern names, but be conservative)
-  if (/\d/.test(name)) return false;
+  // Allow letters, spaces, hyphens, apostrophes, and dots (for titles/initials)
+  if (!/^[a-zA-ZÀ-ÿĀ-žА-я\s\-'\.]+$/.test(name)) return false;
   
-  // Should not contain special characters except spaces, hyphens, and apostrophes
-  if (!/^[a-zA-Z\s\-']+$/.test(name)) return false;
-  
-  // Should have reasonable word count (1-3 words for most names)
+  // Should have reasonable word count (1-5 words for names with titles)
   const wordCount = name.trim().split(/\s+/).length;
-  if (wordCount > 3) return false;
+  if (wordCount > 5) return false;
   
-  return true;
+  // Check if it looks like a real name (has at least one word with 1+ letters)
+  const words = name.trim().split(/\s+/);
+  const hasValidWord = words.some(word => /^[a-zA-ZÀ-ÿĀ-žА-я\-'\.]+$/.test(word));
+  
+  // Exclude obvious non-names
+  const excludedWords = ['hello', 'hi', 'yes', 'no', 'ok', 'okay', 'thanks', 'thank', 'please', 'help', 'urgent', 'asap', 'today', 'tomorrow', 'morning', 'afternoon', 'evening', 'problem', 'issue', 'broken', 'toilet', 'sink', 'drain', 'pipe', 'water', 'plumber', 'plumbing', 'appointment', 'book', 'schedule'];
+  const lowerName = name.toLowerCase();
+  const containsExcluded = excludedWords.some(word => lowerName === word || lowerName.includes(` ${word} `) || lowerName.startsWith(`${word} `) || lowerName.endsWith(` ${word}`));
+  
+  return hasValidWord && !containsExcluded;
 }
 
 // Add emotional intelligence to responses
@@ -4535,9 +4802,6 @@ async function verifyEmailConfirmation() {
 async function sendConfirmationEmail() {
   try {
     console.log('📧 Attempting to send confirmation email to:', stateMachine.clientData.email);
-    
-    // Import the enhanced simple email service with comprehensive template
-    const { sendBookingConfirmationEmail, sendSMSConfirmation } = require('./professional-email-service');
     
     // Calculate estimated duration based on issue type
     const estimatedDuration = calculateServiceDuration(stateMachine.clientData.issueDescription);
@@ -4693,7 +4957,6 @@ async function terminateCall(input = '') {
       console.log('📧 Final attempt to send email confirmation...');
       
       try {
-        const { sendBookingConfirmationEmail } = require('./professional-email-service');
         
         const finalBookingDetails = {
           customerName: stateMachine.clientData.name,
@@ -4839,6 +5102,8 @@ module.exports = {
   calculateEmailTravelTime,
   setCallerPhoneNumber,
   generatePhoneBasedReference,
+  extractNameFromInput,
+  isValidName,
   getStateMachine: () => stateMachine,
   resetStateMachine: () => {
     stateMachine.currentState = 'start';

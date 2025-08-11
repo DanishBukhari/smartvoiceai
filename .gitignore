@@ -89,6 +89,10 @@ TERMINAL_CHAT*.md
 # Service files that are tests
 env-checker.js
 fix-summary.js
+test-enhanced-names.js
+test-travel-system.js
+google-maps-setup.js
+GOOGLE_MAPS_SETUP_GUIDE.md
 
 
 
