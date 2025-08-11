@@ -91,7 +91,7 @@ TERMINAL_CHAT*.md
 env-checker.js
 fix-summary.js
 notifications.js
-professional-email-service.js
+
 simple-email-service.js
 
 
