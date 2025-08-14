@@ -2568,11 +2568,58 @@ async function collectClientDetails(input) {
   console.log('collectClientDetails: Current data', stateMachine.clientData);
   console.log('collectClientDetails: Input received', input);
 
+  // Handle confirmation if we're waiting for one
   if (stateMachine.awaitingConfirmation && stateMachine.pendingConfirmation) {
     return await handleDetailConfirmation(input);
   }
   
   const details = ['name', 'email', 'address']; 
+  
+  // 🔥 CRITICAL FIX: Assign phone number from caller first
+  if (stateMachine.callerPhoneNumber && !stateMachine.clientData.phone) {
+    stateMachine.clientData.phone = stateMachine.callerPhoneNumber;
+    console.log('📱 Phone auto-assigned from caller:', stateMachine.callerPhoneNumber);
+  }
+
+  // 🔥 SMART CONTEXT EXTRACTION: Look for missing data in conversation history
+  if (!stateMachine.clientData.email || !stateMachine.clientData.address || !stateMachine.clientData.name) {
+    console.log('🔍 Scanning conversation history for missing details...');
+    
+    for (const msg of stateMachine.conversationHistory) {
+      if (msg.role === 'user') {
+        const content = msg.content;
+        
+        // Extract email if missing
+        if (!stateMachine.clientData.email) {
+          const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+          if (emailMatch) {
+            stateMachine.clientData.email = emailMatch[0].toLowerCase();
+            console.log('📧 Email extracted from history:', stateMachine.clientData.email);
+          }
+        }
+        
+        // Extract address if missing
+        if (!stateMachine.clientData.address) {
+          if (/\d+\s+[a-zA-Z\s]+(?:street|st|road|rd|avenue|ave),?\s*[a-zA-Z\s]*,?\s*(?:australia|qld|nsw|vic)/i.test(content)) {
+            stateMachine.clientData.address = content.trim();
+            console.log('🏠 Address extracted from history:', stateMachine.clientData.address);
+          }
+        }
+        
+        // Extract name if missing (but avoid issue descriptions)
+        if (!stateMachine.clientData.name && /my name is\s+([a-zA-Z\s]+)/i.test(content)) {
+          const nameMatch = content.match(/my name is\s+([a-zA-Z\s]+)/i);
+          if (nameMatch && nameMatch[1] && !nameMatch[1].toLowerCase().includes('clogged')) {
+            const extractedName = nameMatch[1].trim().replace(/[,\.]+$/, ''); // Remove trailing punctuation
+            if (isValidName(extractedName)) {
+              stateMachine.clientData.name = extractedName;
+              console.log('👤 Name extracted from history:', stateMachine.clientData.name);
+            }
+          }
+        }
+      }
+    }
+  }
   
   // Store the input first if we have one
   if (input && input.trim()) {
@@ -2595,13 +2642,8 @@ async function collectClientDetails(input) {
           return response;
         }
         
-        // 🔥 CRITICAL FIX: Assign phone number from caller
-        if (stateMachine.callerPhoneNumber && !stateMachine.clientData.phone) {
-          stateMachine.clientData.phone = stateMachine.callerPhoneNumber;
-          console.log('📱 Phone auto-assigned from caller:', stateMachine.callerPhoneNumber);
-        }
-        
-        // Request spelling confirmation for the name
+        // Store as temp_name and request confirmation  
+        stateMachine.clientData.temp_name = extractedName;
         console.log('✅ Name extracted, requesting confirmation:', extractedName);
         return await requestDetailConfirmation('name', extractedName);
         
@@ -2623,9 +2665,10 @@ async function collectClientDetails(input) {
         const extractedEmail = cleanedInput.match(emailPattern);
         
         if (extractedEmail && extractedEmail[0]) {
-          // Request spelling confirmation for the email
+          // Store as temp_email and request spelling confirmation
+          stateMachine.clientData.temp_email = extractedEmail[0].toLowerCase();
           console.log('✅ Email extracted, requesting spelling confirmation:', extractedEmail[0]);
-          return await requestDetailConfirmation('email', extractedEmail[0]);
+          return await requestDetailConfirmation('email', extractedEmail[0].toLowerCase());
         } else {
           // Email format not recognized, ask again
           const response = await getResponse(
@@ -4160,9 +4203,9 @@ async function handleDetailConfirmation(input) {
 
   if (isConfirmed) {
     console.log(`📋 Detail confirmed: ${confirmation.type} = ${confirmation.value || 'multiple'}`);
-    let acknowledgment = "";
+    
+    // Move the confirmed detail from temp to permanent storage
     if (confirmation.type === 'multiple') {
-      acknowledgment = "Excellent! ";
       for (const detail of confirmation.details) {
         stateMachine.clientData[detail] = stateMachine.clientData[`temp_${detail}`];
         delete stateMachine.clientData[`temp_${detail}`];
@@ -4170,31 +4213,43 @@ async function handleDetailConfirmation(input) {
     } else {
       stateMachine.clientData[confirmation.type] = confirmation.value;
       delete stateMachine.clientData[`temp_${confirmation.type}`];
-      if (confirmation.type === 'name') acknowledgment = "Perfect! ";
-      else if (confirmation.type === 'email') acknowledgment = "Great! ";
-      else if (confirmation.type === 'address') acknowledgment = "Excellent! ";
     }
+    
+    // Clear confirmation state
     stateMachine.awaitingConfirmation = false;
     stateMachine.pendingConfirmation = null;
+    
+    // Small delay for natural conversation flow
     await new Promise(resolve => setTimeout(resolve, 650));
+    
+    // Continue with detail collection (this will check for next missing detail)
     return await collectClientDetails('');
   } else if (isRejected || (confirmation.type === 'name' && isValidName(input)) || (confirmation.type === 'email' && input.includes('@'))) {
     console.log(`📋 Detail ${isRejected ? 'rejected' : 'corrected'}: ${confirmation.type}`);
     const correctedInput = validateAndCorrectInput(input);
+    
     if (confirmation.type === 'name' && isValidName(correctedInput)) {
       stateMachine.clientData.temp_name = correctedInput;
+      return await requestDetailConfirmation('name', correctedInput);
     } else if (confirmation.type === 'email' && correctedInput.includes('@')) {
-      stateMachine.clientData.temp_email = correctedInput;
+      stateMachine.clientData.temp_email = correctedInput.toLowerCase();
+      return await requestDetailConfirmation('email', correctedInput.toLowerCase());
+    } else if (confirmation.type === 'address') {
+      stateMachine.clientData.temp_address = correctedInput;
+      return await requestDetailConfirmation('address', correctedInput);
     } else {
+      // Clear temp data and ask for correct information
       delete stateMachine.clientData[`temp_${confirmation.type}`];
       stateMachine.awaitingConfirmation = false;
       stateMachine.pendingConfirmation = null;
+      
       const correctionPrompts = {
-        name: "No problem! Could you please tell me your correct name?",
+        name: "No problem! Could you please tell me your correct full name?",
         email: "No problem! Could you please spell out your correct email address?",
         address: "No problem! Could you please give me your correct address?",
         phone: "No problem! Could you please give me your correct phone number?",
       };
+      
       const response = await getResponse(
         correctionPrompts[confirmation.type] || "No problem! Could you please provide the correct information?",
         stateMachine.conversationHistory
@@ -4202,9 +4257,34 @@ async function handleDetailConfirmation(input) {
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
       return response;
     }
-    return await requestDetailConfirmation(confirmation.type, stateMachine.clientData[`temp_${confirmation.type}`]);
   } else {
     console.log(`📋 Unclear confirmation response: ${input}`);
+    
+    // 🔥 INTELLIGENT DETECTION: Check if input contains info for missing details
+    const missingDetail = ['name', 'email', 'address'].find(d => !stateMachine.clientData[d]);
+    
+    if (missingDetail) {
+      console.log(`📋 Detected possible ${missingDetail} in unclear confirmation: ${input}`);
+      
+      // Check if this input actually contains the missing detail
+      if (missingDetail === 'email' && input.includes('@')) {
+        console.log('📋 Input contains email, processing as email instead of confirmation');
+        stateMachine.awaitingConfirmation = false;
+        stateMachine.pendingConfirmation = null;
+        return await collectClientDetails(input);
+      } else if (missingDetail === 'address' && (input.toLowerCase().includes('street') || input.toLowerCase().includes('brisbane') || input.toLowerCase().includes('qld') || /\d+\s+[a-zA-Z\s]+/.test(input))) {
+        console.log('📋 Input contains address, processing as address instead of confirmation');
+        stateMachine.awaitingConfirmation = false;
+        stateMachine.pendingConfirmation = null;
+        return await collectClientDetails(input);
+      } else if (missingDetail === 'name' && /^[a-zA-Z\s]+$/.test(input.trim()) && input.trim().split(' ').length >= 2) {
+        console.log('📋 Input contains name, processing as name instead of confirmation');
+        stateMachine.awaitingConfirmation = false;
+        stateMachine.pendingConfirmation = null;
+        return await collectClientDetails(input);
+      }
+    }
+    
     const clarificationPrompt = `I didn't catch that. Is ${confirmation.value} correct? Please say yes or no, or provide the correct ${confirmation.type}.`;
     const response = await getResponse(clarificationPrompt, stateMachine.conversationHistory);
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
@@ -4679,6 +4759,21 @@ function extractNameFromInput(input) {
   
   let name = input.trim();
   
+  // First check if the input is clearly not a name (plumbing issues, etc.)
+  const plumbingPhrases = [
+    'clogged', 'blocked', 'leaking', 'dripping', 'running', 'broken', 'stopped',
+    'backing up', 'overflowing', 'no hot water', 'low pressure', 'won\'t flush',
+    'toilet', 'sink', 'drain', 'pipe', 'faucet', 'shower', 'bathtub'
+  ];
+  
+  const lowerInput = input.toLowerCase();
+  const isPlumbingRelated = plumbingPhrases.some(phrase => lowerInput.includes(phrase));
+  
+  if (isPlumbingRelated) {
+    console.log(`Rejecting plumbing-related input as name: "${input}"`);
+    return null;
+  }
+  
   // Common patterns for name introductions
   const namePatterns = [
     /(?:my name is|i'm|i am|this is|call me|it's)\s+([a-zA-Z\s\-'\.]+?)(?:\s*\.?$|,|\sand\s)/i,
@@ -4699,6 +4794,12 @@ function extractNameFromInput(input) {
     .replace(/\s*\d+\s*/g, ' ')     // Remove numbers (except in context)
     .replace(/\s+/g, ' ')           // Normalize spaces
     .trim();
+  
+  // Final validation using isValidName function
+  if (!isValidName(name)) {
+    console.log(`Extracted name "${name}" failed validation`);
+    return null;
+  }
   
   // Convert common speech patterns to proper names
   const nameCorrections = {
@@ -4862,7 +4963,7 @@ function isValidName(candidateName) {
   const hasValidWord = words.some(word => /^[a-zA-ZÀ-ÿĀ-žА-я\-'\.]+$/.test(word));
   
   // Exclude obvious non-names and conversational phrases
-  const excludedWords = ['hello', 'hi', 'yes', 'no', 'ok', 'okay', 'thanks', 'thank', 'please', 'help', 'urgent', 'asap', 'today', 'tomorrow', 'morning', 'afternoon', 'evening', 'problem', 'issue', 'broken', 'toilet', 'sink', 'drain', 'pipe', 'water', 'plumber', 'plumbing', 'appointment', 'book', 'schedule', 'ready', 'provide', 'details', 'give', 'tell', 'information', 'data', 'waiting', 'prepared'];
+  const excludedWords = ['hello', 'hi', 'yes', 'no', 'ok', 'okay', 'thanks', 'thank', 'please', 'help', 'urgent', 'asap', 'today', 'tomorrow', 'morning', 'afternoon', 'evening', 'problem', 'issue', 'broken', 'toilet', 'sink', 'drain', 'pipe', 'water', 'plumber', 'plumbing', 'appointment', 'book', 'schedule', 'ready', 'provide', 'details', 'give', 'tell', 'information', 'data', 'waiting', 'prepared', 'clogged', 'blocked', 'leaking', 'dripping', 'running', 'slow', 'stopped', 'backing', 'overflowing', 'cold', 'hot', 'pressure', 'flow', 'flush', 'handle', 'tank'];
   
   // Also check for conversational phrases that are definitely not names
   const conversationalPhrases = [
@@ -4874,7 +4975,19 @@ function isValidName(candidateName) {
     'share my',
     'here are my',
     'waiting to give',
-    'prepared to share'
+    'prepared to share',
+    'it\'s clogged',
+    'its clogged', 
+    'it is clogged',
+    'toilet is clogged',
+    'drain is blocked',
+    'pipe is broken',
+    'water is running',
+    'no hot water',
+    'low pressure',
+    'not working',
+    'won\'t flush',
+    'keeps running'
   ];
   
   const lowerName = name.toLowerCase();
