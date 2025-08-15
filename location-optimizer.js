@@ -1,5 +1,8 @@
 // location-optimizer.js - Smart location-based booking optimization
 
+// Australian timezone configuration
+const BRISBANE_TZ = 'Australia/Brisbane';
+
 // Cache for location data and clustering
 const locationCache = new Map();
 const clusterCache = new Map();
@@ -20,6 +23,58 @@ const CLUSTER_CONFIG = {
   minClusterSize: 2, // minimum bookings to form a cluster
   maxClusterSize: 6, // maximum bookings per cluster per day
   travelTimeBuffer: 15, // minutes buffer between appointments
+  jobCompletionBuffer: 15, // minutes buffer for unexpected delays
+};
+
+// Job duration estimation based on issue type and complexity
+const JOB_DURATION_ESTIMATES = {
+  // Toilet issues
+  toilet: {
+    basic: 60, // minutes - simple repairs, adjustments
+    moderate: 90, // minutes - part replacements, blockages
+    complex: 120, // minutes - major repairs, installations
+    urgent: 45, // minutes - emergency fixes
+  },
+  
+  // Tap/faucet issues  
+  tap: {
+    basic: 45, // minutes - washer replacement, minor leaks
+    moderate: 75, // minutes - cartridge replacement, mixer repairs
+    complex: 105, // minutes - complete tap replacement
+    urgent: 30, // minutes - emergency shut-offs
+  },
+  
+  // Hot water systems
+  hotwater: {
+    basic: 90, // minutes - element replacement, thermostat
+    moderate: 120, // minutes - valve repairs, minor leaks
+    complex: 180, // minutes - system replacement
+    urgent: 60, // minutes - emergency repairs
+  },
+  
+  // Blocked drains
+  drain: {
+    basic: 60, // minutes - simple blockages
+    moderate: 90, // minutes - stubborn blockages, snaking
+    complex: 150, // minutes - major blockages, excavation
+    urgent: 45, // minutes - emergency clearing
+  },
+  
+  // General plumbing
+  general: {
+    basic: 75, // minutes - standard repairs
+    moderate: 105, // minutes - multiple issues
+    complex: 135, // minutes - complex diagnostics
+    urgent: 60, // minutes - emergency response
+  },
+  
+  // Default fallback
+  default: {
+    basic: 90, // minutes - conservative estimate
+    moderate: 120, // minutes - standard service call
+    complex: 150, // minutes - complex job
+    urgent: 75, // minutes - urgent response
+  }
 };
 
 // Calculate distance between two coordinates using Haversine formula
@@ -36,6 +91,101 @@ function calculateDistance(coord1, coord2) {
 
 function toRadians(degrees) {
   return degrees * (Math.PI / 180);
+}
+
+/**
+ * Estimate job duration based on issue description and complexity
+ */
+function estimateJobDuration(issueDescription, urgencyLevel = 'normal') {
+  console.log('🔧 Estimating job duration for:', issueDescription);
+  
+  // SAFETY: Ensure issueDescription is a string
+  if (!issueDescription || typeof issueDescription !== 'string') {
+    console.log('⚠️ Invalid issue description, using default');
+    issueDescription = 'general plumbing repair';
+  }
+  
+  const description = issueDescription.toLowerCase();
+  let issueType = 'general';
+  let complexity = 'moderate';
+  
+  // Determine issue type
+  if (description.includes('toilet') || description.includes('cistern') || description.includes('flush')) {
+    issueType = 'toilet';
+  } else if (description.includes('tap') || description.includes('faucet') || description.includes('mixer')) {
+    issueType = 'tap';
+  } else if (description.includes('hot water') || description.includes('water heater') || description.includes('boiler')) {
+    issueType = 'hotwater';
+  } else if (description.includes('blocked') || description.includes('drain') || description.includes('clog')) {
+    issueType = 'drain';
+  }
+  
+  // Determine complexity level
+  const urgentKeywords = ['emergency', 'urgent', 'flooding', 'burst', 'no water'];
+  const complexKeywords = ['replacement', 'install', 'major', 'complete', 'renovation'];
+  const basicKeywords = ['minor', 'small', 'slight', 'adjust', 'tighten'];
+  
+  if (urgentKeywords.some(keyword => description.includes(keyword))) {
+    complexity = 'urgent';
+  } else if (complexKeywords.some(keyword => description.includes(keyword))) {
+    complexity = 'complex';
+  } else if (basicKeywords.some(keyword => description.includes(keyword))) {
+    complexity = 'basic';
+  }
+  
+  // Override with urgency level if specified
+  if (urgencyLevel === 'urgent' || urgencyLevel === 'emergency') {
+    complexity = 'urgent';
+  }
+  
+  // Get duration estimate
+  const estimates = JOB_DURATION_ESTIMATES[issueType] || JOB_DURATION_ESTIMATES.default;
+  const estimatedDuration = estimates[complexity] || estimates.moderate;
+  
+  console.log(`🎯 Job assessment: ${issueType}/${complexity} = ${estimatedDuration} minutes`);
+  
+  return {
+    issueType,
+    complexity,
+    estimatedDuration, // in minutes
+    bufferTime: CLUSTER_CONFIG.jobCompletionBuffer,
+    totalDuration: estimatedDuration + CLUSTER_CONFIG.jobCompletionBuffer
+  };
+}
+
+/**
+ * Calculate next available booking slot with smart scheduling
+ */
+function calculateNextBookingSlot(previousJobEnd, travelTimeMinutes, jobDuration) {
+  console.log('📅 Calculating next booking slot:');
+  console.log(`   Previous job ends: ${previousJobEnd}`);
+  console.log(`   Travel time: ${travelTimeMinutes} minutes`);
+  console.log(`   Job duration: ${jobDuration.estimatedDuration} minutes`);
+  
+  // Calculate total buffer needed
+  const totalBuffer = jobDuration.bufferTime + travelTimeMinutes;
+  console.log(`   Total buffer needed: ${totalBuffer} minutes`);
+  
+  // Add buffer to previous job end time
+  const nextSlotTime = new Date(previousJobEnd.getTime() + (totalBuffer * 60000));
+  
+  // Round to nearest 5-minute interval for professional scheduling
+  const minutes = nextSlotTime.getMinutes();
+  const roundedMinutes = Math.ceil(minutes / 5) * 5;
+  nextSlotTime.setMinutes(roundedMinutes, 0, 0);
+  
+  console.log(`   Next available slot: ${nextSlotTime.toLocaleString('en-AU', { 
+    timeZone: BRISBANE_TZ,
+    dateStyle: 'short',
+    timeStyle: 'short'
+  })}`);
+  
+  return {
+    slotTime: nextSlotTime,
+    jobDuration: jobDuration,
+    travelTime: travelTimeMinutes,
+    totalBuffer: totalBuffer
+  };
 }
 
 /**
@@ -485,28 +635,43 @@ async function calculateTravelDistance(coordinates, address) {
 }
 
 /**
- * Enhanced booking function that finds the most travel-efficient slot
+ * Enhanced booking function that finds the most travel-efficient slot with smart job duration estimation
  */
-async function findMostEfficientSlot(accessToken, newAddress, preferredDate = null) {
+async function findMostEfficientSlot(accessToken, newAddress, issueDescription = '', urgencyLevel = 'normal', preferredDate = null) {
   console.log('🚗 SMART SCHEDULING: Finding most fuel-efficient appointment slot...');
   
   try {
+    // Step 1: Assess the job to estimate duration
+    const jobAssessment = estimateJobDuration(issueDescription, urgencyLevel);
+    console.log(`🔧 Job Assessment Complete: ${jobAssessment.estimatedDuration} min + ${jobAssessment.bufferTime} min buffer`);
+    
     // Get coordinates for the new appointment
     const newCoordinates = await getCoordinatesFromAddress(newAddress);
     console.log(`📍 New appointment coordinates: ${newCoordinates.lat}, ${newCoordinates.lng}`);
     
-    // Find optimal slots
-    const optimalSlots = await findOptimalTimeSlots(newCoordinates, preferredDate, accessToken);
+    // Find optimal slots with job duration consideration
+    const optimalSlots = await findOptimalTimeSlotsWithDuration(newCoordinates, jobAssessment, preferredDate, accessToken);
     
     if (optimalSlots.length === 0) {
       console.log('⚠️ No optimal slots found, falling back to standard scheduling');
-      return null;
+      return {
+        slot: null,
+        jobAssessment: jobAssessment,
+        fallbackMessage: 'Standard scheduling applied - no clustering opportunities found'
+      };
     }
     
     const bestSlot = optimalSlots[0];
     
     console.log('🎯 OPTIMAL SLOT SELECTED:');
-    console.log(`   📅 Time: ${bestSlot.dateTime.toLocaleString()}`);
+    console.log(`   📅 Time: ${bestSlot.dateTime.toLocaleString('en-AU', { 
+      timeZone: BRISBANE_TZ,
+      dateStyle: 'short',
+      timeStyle: 'short'
+    })}`);
+    console.log(`   ⏱️ Job Duration: ${jobAssessment.estimatedDuration} minutes`);
+    console.log(`   🛡️ Buffer Time: ${jobAssessment.bufferTime} minutes`);
+    console.log(`   🚗 Travel Time: ${bestSlot.travelTime} minutes`);
     console.log(`   ⚡ Efficiency: ${bestSlot.efficiency}`);
     console.log(`   🚗 Travel Distance: ${bestSlot.travelDistance.toFixed(1)}km`);
     console.log(`   💡 Reason: ${bestSlot.reason}`);
@@ -516,25 +681,196 @@ async function findMostEfficientSlot(accessToken, newAddress, preferredDate = nu
     }
     
     return {
-      slot: bestSlot.dateTime,
-      analysis: {
-        efficiency: bestSlot.efficiency,
+      slot: {
+        start: bestSlot.dateTime.toISOString(),
+        end: new Date(bestSlot.dateTime.getTime() + (jobAssessment.estimatedDuration * 60000)).toISOString()
+      },
+      jobAssessment: jobAssessment,
+      efficiency: {
+        rating: bestSlot.efficiency,
         travelDistance: bestSlot.travelDistance,
+        travelTime: bestSlot.travelTime,
+        fuelSavings: calculateFuelSavings(bestSlot.travelDistance),
         reason: bestSlot.reason,
         clusterOpportunity: bestSlot.clusterOpportunity,
-        fuelSavings: calculateFuelSavings(bestSlot.travelDistance)
+        message: generateEfficiencyMessage(bestSlot, jobAssessment)
       }
     };
     
   } catch (error) {
     console.error('❌ Error finding efficient slot:', error.message);
-    return null;
+    const fallbackAssessment = estimateJobDuration(issueDescription, urgencyLevel);
+    return {
+      slot: null,
+      jobAssessment: fallbackAssessment,
+      error: error.message
+    };
   }
 }
 
 /**
- * Calculate estimated fuel savings compared to random scheduling
+ * Find optimal time slots considering job duration and scheduling buffers
  */
+async function findOptimalTimeSlotsWithDuration(newCoordinates, jobAssessment, preferredDate, accessToken) {
+  console.log('🔍 Finding optimal slots with duration consideration...');
+  
+  // Get existing appointments from calendar
+  const existingAppointments = await getCalendarAppointments(accessToken);
+  
+  // Analyze each potential time slot
+  const candidateSlots = [];
+  
+  // Validate and handle preferredDate input
+  let startDate;
+  if (preferredDate) {
+    // If preferredDate is already a Date object, use it directly
+    if (preferredDate instanceof Date) {
+      startDate = preferredDate;
+    } else {
+      // Try to parse as date string
+      startDate = new Date(preferredDate);
+      // If parsing failed, fall back to current time
+      if (isNaN(startDate.getTime())) {
+        console.log(`⚠️ Invalid preferredDate "${preferredDate}", using current time`);
+        startDate = new Date();
+      }
+    }
+  } else {
+    startDate = new Date();
+  }
+  
+  console.log(`📅 Starting search from: ${startDate.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`);
+  
+  // Look ahead 7 days for optimal slots
+  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+    const checkDate = new Date(startDate);
+    checkDate.setDate(startDate.getDate() + dayOffset);
+    
+    // Check business hours (8 AM to 5 PM)
+    for (let hour = 8; hour < 17; hour++) {
+      const slotTime = new Date(checkDate);
+      slotTime.setHours(hour, 0, 0, 0);
+      
+      // Skip if slot is in the past
+      if (slotTime <= new Date()) continue;
+      
+      // Check if slot is available and calculate efficiency
+      const slotAnalysis = await analyzeTimeSlot(slotTime, newCoordinates, jobAssessment, existingAppointments);
+      
+      if (slotAnalysis.available) {
+        candidateSlots.push(slotAnalysis);
+      }
+    }
+  }
+  
+  // Sort by efficiency score (higher is better)
+  candidateSlots.sort((a, b) => b.efficiency - a.efficiency);
+  
+  console.log(`📊 Found ${candidateSlots.length} candidate slots, top 3:`);
+  candidateSlots.slice(0, 3).forEach((slot, index) => {
+    console.log(`   ${index + 1}. ${slot.dateTime.toLocaleString()} - Efficiency: ${slot.efficiency}`);
+  });
+  
+  return candidateSlots;
+}
+
+/**
+ * Analyze a specific time slot for booking efficiency
+ */
+async function analyzeTimeSlot(slotTime, newCoordinates, jobAssessment, existingAppointments) {
+  // Find the appointment immediately before this slot
+  const beforeAppointments = existingAppointments.filter(apt => 
+    new Date(apt.end?.dateTime || apt.end?.date) <= slotTime
+  ).sort((a, b) => new Date(b.end?.dateTime || b.end?.date) - new Date(a.end?.dateTime || a.end?.date));
+  
+  // Find the appointment immediately after this slot
+  const afterAppointments = existingAppointments.filter(apt => 
+    new Date(apt.start?.dateTime || apt.start?.date) >= slotTime
+  ).sort((a, b) => new Date(a.start?.dateTime || a.start?.date) - new Date(b.start?.dateTime || b.start?.date));
+  
+  const prevAppointment = beforeAppointments[0];
+  const nextAppointment = afterAppointments[0];
+  
+  // Calculate travel distances and times
+  let travelFromPrev = 0;
+  let travelToNext = 0;
+  let efficiency = 50; // base efficiency score
+  let reason = 'Standard scheduling';
+  let clusterOpportunity = false;
+  
+  if (prevAppointment) {
+    const prevLocation = await getCoordinatesFromAddress(prevAppointment.location || '142 Queen Street, Brisbane');
+    if (prevLocation) {
+      travelFromPrev = calculateDistance(prevLocation, newCoordinates);
+    }
+  }
+  
+  if (nextAppointment) {
+    const nextLocation = await getCoordinatesFromAddress(nextAppointment.location || '142 Queen Street, Brisbane');
+    if (nextLocation) {
+      travelToNext = calculateDistance(newCoordinates, nextLocation);
+    }
+  }
+  
+  // Calculate efficiency based on travel optimization
+  const totalTravelDistance = travelFromPrev + travelToNext;
+  
+  if (totalTravelDistance < 15) {
+    efficiency = 90;
+    reason = 'Excellent clustering - minimal travel between appointments';
+    clusterOpportunity = true;
+  } else if (totalTravelDistance < 25) {
+    efficiency = 75;
+    reason = 'Good proximity to other appointments';
+  } else if (totalTravelDistance < 40) {
+    efficiency = 60;
+    reason = 'Moderate travel distance';
+  } else {
+    efficiency = 40;
+    reason = 'Higher travel distance - consider alternative times';
+  }
+  
+  // Check if there's enough time between appointments
+  const jobEndTime = new Date(slotTime.getTime() + (jobAssessment.totalDuration * 60000));
+  let available = true;
+  
+  if (nextAppointment) {
+    const nextStartTime = new Date(nextAppointment.start?.dateTime || nextAppointment.start?.date);
+    const travelTimeNeeded = Math.ceil(travelToNext * 2.5); // 2.5 minutes per km estimation
+    const bufferNeeded = travelTimeNeeded + CLUSTER_CONFIG.travelTimeBuffer;
+    
+    if (jobEndTime.getTime() + (bufferNeeded * 60000) > nextStartTime.getTime()) {
+      available = false;
+    }
+  }
+  
+  return {
+    dateTime: slotTime,
+    available,
+    efficiency,
+    travelDistance: totalTravelDistance,
+    travelTime: Math.ceil(totalTravelDistance * 2.5), // minutes
+    reason,
+    clusterOpportunity,
+    travelFromPrev,
+    travelToNext
+  };
+}
+
+/**
+ * Generate customer-friendly efficiency message
+ */
+function generateEfficiencyMessage(bestSlot, jobAssessment) {
+  const savings = calculateFuelSavings(bestSlot.travelDistance);
+  
+  if (bestSlot.clusterOpportunity) {
+    return `Optimized scheduling saved ${Math.round(bestSlot.travelDistance)}km travel distance and $${savings.costAUD} in fuel costs! We'll be servicing nearby locations the same day.`;
+  } else if (bestSlot.efficiency > 70) {
+    return `Smart scheduling optimized your appointment for efficient service and reduced travel time.`;
+  } else {
+    return `Your appointment has been scheduled with standard efficiency.`;
+  }
+}
 function calculateFuelSavings(optimizedDistance) {
   const averageRandomDistance = 35; // km - typical random scheduling distance
   const fuelConsumption = 0.1; // L/km - typical van consumption
@@ -551,13 +887,39 @@ function calculateFuelSavings(optimizedDistance) {
   };
 }
 
+/**
+ * Get calendar appointments for analysis
+ */
+async function getCalendarAppointments(accessToken) {
+  try {
+    // This would typically fetch from Google Calendar API
+    // For now, return mock data that represents existing appointments
+    return [
+      {
+        start: { dateTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() }, // Tomorrow
+        end: { dateTime: new Date(Date.now() + 25 * 60 * 60 * 1000).toISOString() },
+        location: '100 Queen Street, Brisbane, QLD',
+        summary: 'Plumbing Service'
+      }
+    ];
+  } catch (error) {
+    console.error('Error fetching calendar appointments:', error);
+    return [];
+  }
+}
+
 module.exports = {
   analyzeLocationForBooking,
   addBookingToCluster,
   getClusterStatus,
   calculateDistance,
   findOptimalTimeSlots,
+  findOptimalTimeSlotsWithDuration,
   findMostEfficientSlot,
   calculateTravelDistance,
+  estimateJobDuration,
+  calculateNextBookingSlot,
+  generateEfficiencyMessage,
+  JOB_DURATION_ESTIMATES,
   SERVICE_AREA
 };
