@@ -3102,8 +3102,15 @@ async function handleAppointmentBooking(input) {
     lastBookedJobLocation = lastJobLocation;
   } else {
     console.log('handleAppointmentBooking: No previous appointments found - first booking of the day');
-    // For first booking of the day, use requested time if reasonable
-    if (input && !input.toLowerCase().includes('asap') && !stateMachine.clientData.urgent) {
+    
+    // Check if customer is asking for earliest available time
+    const earliestRequests = ['earliest', 'earliest available', 'earliest slot', 'first available', 'soonest', 'next available'];
+    const isRequestingEarliest = earliestRequests.some(phrase => input.toLowerCase().includes(phrase));
+    
+    if (isRequestingEarliest) {
+      console.log('🎯 Customer requesting earliest available time - skipping time parsing, using smart scheduling');
+      // Skip time parsing for earliest requests - let smart scheduling handle it
+    } else if (input && !input.toLowerCase().includes('asap') && !stateMachine.clientData.urgent) {
       try {
         // Try to parse customer's preferred time
         const parsePrompt = `Parse this appointment time request: "${input}". Current time is ${now.toISOString()}. Return ISO datetime string (YYYY-MM-DDTHH:mm:00Z) or "invalid" if unclear. Assume Australia/Brisbane timezone.`;
@@ -3155,15 +3162,23 @@ async function handleAppointmentBooking(input) {
         earliestStartTime
       );
       
-      if (smartSlotResult && smartSlotResult.slot && smartSlotResult.slot >= earliestStartTime && smartSlotResult.slot <= maxEndDate) {
-        nextSlot = smartSlotResult.slot;
-        stateMachine.smartSchedulingPreview = smartSlotResult.analysis;
+      if (smartSlotResult && smartSlotResult.slot) {
+        // Smart scheduling returns an object with start/end properties
+        const smartSlotTime = smartSlotResult.slot.start ? new Date(smartSlotResult.slot.start) : smartSlotResult.slot;
         
-        console.log('🎯 SMART SCHEDULING SUCCESS for quote:');
-        console.log(`   ⚡ Efficiency: ${smartSlotResult.analysis.efficiency}`);
-        console.log(`   🚗 Travel Distance: ${smartSlotResult.analysis.travelDistance.toFixed(1)}km`);
-        console.log(`   💰 Estimated Savings: $${smartSlotResult.analysis.fuelSavings.costAUD} AUD`);
-        console.log(`   💡 Strategy: ${smartSlotResult.analysis.reason}`);
+        if (smartSlotTime >= earliestStartTime && smartSlotTime <= maxEndDate) {
+          nextSlot = smartSlotTime;
+          stateMachine.smartSchedulingPreview = smartSlotResult.efficiency;
+          
+          console.log('🎯 SMART SCHEDULING SUCCESS for quote:');
+          console.log(`   📅 Optimal Time: ${smartSlotTime.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`);
+          console.log(`   ⚡ Efficiency: ${smartSlotResult.efficiency?.rating}`);
+          console.log(`   🚗 Travel Distance: ${smartSlotResult.efficiency?.travelDistance?.toFixed(1) || 0}km`);
+          console.log(`   💰 Estimated Savings: $${smartSlotResult.efficiency?.fuelSavings?.costAUD || '5-15'} AUD`);
+          console.log(`   💡 Strategy: ${smartSlotResult.efficiency?.reason}`);
+        } else {
+          console.log('⚠️ Smart scheduling slot outside business hours, using standard selection');
+        }
       } else {
         console.log('⚠️ Smart scheduling found no optimal slots for today, using standard selection');
       }
@@ -3182,8 +3197,11 @@ async function handleAppointmentBooking(input) {
       return "Sorry, no slots are available today for urgent service. Would you like to try tomorrow?";
     }
   } else if (!lastAppointment) {
-    // First booking of the day - use customer's exact requested time if possible
-    if (!nextSlot && input && !input.toLowerCase().includes('next available')) {
+    // First booking of the day - use smart scheduled slot if available, otherwise parse customer request
+    const earliestRequests = ['earliest', 'earliest available', 'earliest slot', 'first available', 'soonest', 'next available'];
+    const isRequestingEarliest = earliestRequests.some(phrase => input.toLowerCase().includes(phrase));
+    
+    if (!nextSlot && input && !isRequestingEarliest) {
       const parsePrompt = `Parse the preferred appointment time from: "${input}". Current time is ${now.toISOString()}. Return ISO datetime string (YYYY-MM-DDTHH:mm:00Z) or "invalid" if can't parse. Assume Australia/Brisbane timezone.`;
       let preferredStr = await getResponse(parsePrompt);
       
@@ -3203,6 +3221,7 @@ async function handleAppointmentBooking(input) {
     
     // If we couldn't parse or slot wasn't free, get next available
     if (!nextSlot) {
+      console.log('🎯 Getting next available slot for customer request');
       nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
     }
   } else {
@@ -4789,20 +4808,26 @@ async function confirmAppointmentBooking(input, emergencyMode = false) {
           );
           
           if (smartSlotResult && smartSlotResult.slot) {
-            appointmentTime = smartSlotResult.slot;
+            // Smart scheduling returns an object with start/end times
+            if (smartSlotResult.slot.start) {
+              appointmentTime = new Date(smartSlotResult.slot.start);
+            } else {
+              appointmentTime = smartSlotResult.slot; // Fallback if it's already a Date
+            }
+            
             smartSchedulingMessage = `\n\n🎯 Smart Scheduling Applied:\n` +
               `• Job Assessment: ${smartSlotResult.jobAssessment?.issueType}/${smartSlotResult.jobAssessment?.complexity} = ${smartSlotResult.jobAssessment?.estimatedDuration} minutes\n` +
-              `• Travel Optimization: ${smartSlotResult.analysis?.reason || 'Route optimized'}\n` +
-              `• Efficiency Rating: ${smartSlotResult.analysis?.efficiency || 'HIGH'}\n` +
-              `• Estimated Savings: $${smartSlotResult.analysis?.fuelSavings?.costAUD || '5-15'} AUD`;
+              `• Travel Optimization: ${smartSlotResult.efficiency?.reason || 'Route optimized'}\n` +
+              `• Efficiency Rating: ${smartSlotResult.efficiency?.rating || 'HIGH'}\n` +
+              `• Estimated Savings: $${smartSlotResult.efficiency?.fuelSavings?.costAUD || '5-15'} AUD`;
             
             console.log('🎯 SMART SCHEDULING SUCCESS:');
             console.log(`   📅 Optimal Time: ${appointmentTime.toLocaleString('en-AU', { timeZone: BRISBANE_TZ })}`);
             console.log(`   🔧 Job Duration: ${smartSlotResult.jobAssessment?.estimatedDuration} minutes`);
-            console.log(`   ⚡ Efficiency: ${smartSlotResult.analysis?.efficiency}`);
-            console.log(`   💰 Savings: $${smartSlotResult.analysis?.fuelSavings?.costAUD} AUD`);
+            console.log(`   ⚡ Efficiency: ${smartSlotResult.efficiency?.rating}`);
+            console.log(`   💰 Savings: $${smartSlotResult.efficiency?.fuelSavings?.costAUD} AUD`);
           } else {
-            console.log('⚠️ Smart scheduling failed, using standard time');
+            console.log('⚠️ Smart scheduling failed, using earliest available time');
             appointmentTime = earliestStartTime;
           }
           

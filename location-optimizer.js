@@ -848,12 +848,12 @@ async function analyzeTimeSlot(slotTime, newCoordinates, jobAssessment, existing
     dateTime: slotTime,
     available,
     efficiency,
-    travelDistance: totalTravelDistance,
-    travelTime: Math.ceil(totalTravelDistance * 2.5), // minutes
+    travelDistance: isNaN(totalTravelDistance) ? 0 : totalTravelDistance,
+    travelTime: isNaN(totalTravelDistance) ? 0 : Math.ceil(totalTravelDistance * 2.5), // minutes
     reason,
     clusterOpportunity,
-    travelFromPrev,
-    travelToNext
+    travelFromPrev: isNaN(travelFromPrev) ? 0 : travelFromPrev,
+    travelToNext: isNaN(travelToNext) ? 0 : travelToNext
   };
 }
 
