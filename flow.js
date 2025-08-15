@@ -761,14 +761,18 @@ async function autoBookAppointment() {
       
       if (smartSlotResult && smartSlotResult.slot) {
         console.log('🎯 SMART SCHEDULING SUCCESS: Found optimal slot!');
-        console.log(`   ⚡ Efficiency Level: ${smartSlotResult.analysis.efficiency}`);
-        console.log(`   🚗 Travel Distance: ${smartSlotResult.analysis.travelDistance.toFixed(1)}km`);
-        console.log(`   💰 Estimated Savings: $${smartSlotResult.analysis.fuelSavings.costAUD} AUD`);
-        console.log(`   💡 Strategy: ${smartSlotResult.analysis.reason}`);
+        console.log(`   ⚡ Efficiency Level: ${smartSlotResult.efficiency?.rating || 'HIGH'}`);
+        console.log(`   🚗 Travel Distance: ${smartSlotResult.efficiency?.travelDistance?.toFixed(1) || '0.0'}km`);
+        console.log(`   💰 Estimated Savings: $${smartSlotResult.efficiency?.fuelSavings?.costAUD || '5-15'} AUD`);
+        console.log(`   💡 Strategy: ${smartSlotResult.efficiency?.reason || 'Optimized scheduling'}`);
         
-        // Use the optimized slot
-        stateMachine.nextSlot = smartSlotResult.slot;
-        stateMachine.smartScheduling = smartSlotResult.analysis;
+        // Use the optimized slot - handle both object and Date formats
+        if (smartSlotResult.slot.start) {
+          stateMachine.nextSlot = new Date(smartSlotResult.slot.start);
+        } else {
+          stateMachine.nextSlot = smartSlotResult.slot;
+        }
+        stateMachine.smartScheduling = smartSlotResult.efficiency;
       } else {
         console.log('⚠️ Smart scheduling unavailable, using standard slot selection...');
       }
@@ -792,10 +796,10 @@ async function autoBookAppointment() {
       }
       stateMachine.nextSlot = nextSlot;
     }
-    console.log(`? Available slot found: ${nextSlot}`);
+    console.log(`? Available slot found: ${stateMachine.nextSlot}`);
     
     // Format appointment time
-    const appointmentTime = nextSlot.toLocaleString('en-AU', {
+    const appointmentTime = stateMachine.nextSlot.toLocaleString('en-AU', {
       timeZone: BRISBANE_TZ,
       weekday: 'long',
       month: 'long',
@@ -4673,12 +4677,28 @@ async function handleBookingComplete(input) {
   
   const lowerInput = input.toLowerCase();
   
-  // Check if customer wants to end the conversation
-  if (lowerInput.includes('no') || lowerInput.includes('nothing') || 
-      lowerInput.includes('that\'s all') || lowerInput.includes('goodbye') || 
-      lowerInput.includes('bye') || lowerInput.includes('thanks') ||
-      lowerInput.includes('that\'s it') || lowerInput.includes('all good') ||
-      lowerInput.includes('i\'m good') || lowerInput.includes('nope')) {
+  // Enhanced detection for wanting to end call
+  const endCallKeywords = [
+    'no', 'nothing', 'that\'s all', 'goodbye', 'bye', 'thanks', 'thank you',
+    'that\'s it', 'all good', 'i\'m good', 'nope', 'not really', 'no thank you',
+    'no thanks', 'that\'s everything', 'all set', 'good to go', 'perfect',
+    'great', 'awesome', 'excellent', 'sounds good', 'okay thanks', 'ok thanks',
+    'we\'re good', 'i\'m done', 'that\'s fine', 'all done', 'finished',
+    'no more', 'nothing else', 'that\'s all for now', 'see you later',
+    'that sounds good', 'good', 'ok', 'okay', 'alright', 'sure', 'yep'
+  ];
+  
+  // Also check for very short responses (likely "no" or "ok")
+  const isShortResponse = lowerInput.trim().length <= 6;
+  
+  // Check for responses that are just confirmations without asking for more
+  const justConfirming = ['good', 'ok', 'okay', 'alright', 'sure', 'great', 'perfect', 'excellent'].includes(lowerInput.trim());
+  
+  const wantsToEnd = endCallKeywords.some(keyword => lowerInput.includes(keyword)) || 
+                    isShortResponse || 
+                    justConfirming;
+  
+  if (wantsToEnd) {
     
     console.log('?? Customer wants to end call - verifying email confirmation');
     
@@ -4735,6 +4755,60 @@ Thank you for choosing Usher Fix Plumbing! ??`;
     stateMachine.conversationHistory.push({ role: 'assistant', content: continueResponse });
     stateMachine.currentState = 'general';
     return continueResponse;
+  }
+  
+  // Enhanced logic for detecting customer satisfaction and readiness to end call
+  const satisfactionIndicators = ['good', 'great', 'perfect', 'excellent', 'awesome', 'sounds good', 'thank you', 'thanks'];
+  const isSatisfied = satisfactionIndicators.some(indicator => lowerInput.includes(indicator));
+  
+  // If customer seems satisfied but isn't explicitly ending, offer to end the call
+  if (isSatisfied && !lowerInput.includes('question') && !lowerInput.includes('help') && !lowerInput.includes('more')) {
+    console.log('?? Customer seems satisfied, offering to end call politely');
+    
+    const satisfiedEndMessage = `Wonderful! I'm so glad I could help you get your appointment sorted. 
+
+Your confirmation details have been sent to ${stateMachine.clientData.email}, and our plumber will be there as scheduled.
+
+Have a fantastic day, and thank you for choosing Usher Fix Plumbing! ??`;
+    
+    const satisfiedResponse = await getResponse(satisfiedEndMessage, stateMachine.conversationHistory);
+    
+    stateMachine.conversationHistory.push({ role: 'assistant', content: satisfiedResponse });
+    stateMachine.currentState = 'call_ending';
+    
+    // Set termination flag
+    stateMachine.pendingTermination = {
+      reason: 'customer_satisfied',
+      timestamp: new Date().toISOString(),
+      shouldClose: true
+    };
+    
+    return satisfiedResponse;
+  }
+  
+  // If customer provides unclear response after booking, assume they want to end call
+  if (stateMachine.awaitingCallEnd) {
+    console.log('?? Customer response unclear after booking completion, ending call gracefully');
+    
+    const autoEndMessage = `I understand you're all set! Your appointment is confirmed and we'll see you soon. 
+
+Your confirmation email has been sent to ${stateMachine.clientData.email}.
+
+Thank you for choosing Usher Fix Plumbing! Have a great day! ??`;
+    
+    const autoEndResponse = await getResponse(autoEndMessage, stateMachine.conversationHistory);
+    
+    stateMachine.conversationHistory.push({ role: 'assistant', content: autoEndResponse });
+    stateMachine.currentState = 'call_ending';
+    
+    // Set termination flag
+    stateMachine.pendingTermination = {
+      reason: 'auto_end_after_booking',
+      timestamp: new Date().toISOString(),
+      shouldClose: true
+    };
+    
+    return autoEndResponse;
   }
   
   // For any other input, check if it's a new issue or question
@@ -4869,6 +4943,11 @@ Special Instructions: ${stateMachine.clientData.specialInstructions || 'None'}${
         const appointment = await createAppointment(accessToken, eventDetails);
         
         if (appointment) {
+          // Store the appointment time in stateMachine for email confirmation
+          stateMachine.appointmentTime = appointmentTime;
+          stateMachine.appointmentBooked = true;
+          stateMachine.appointmentId = appointment;
+          
           const formattedTime = appointmentTime.toLocaleString('en-AU', {
             timeZone: BRISBANE_TZ,
             weekday: 'long',
@@ -4917,11 +4996,29 @@ Special Instructions: ${stateMachine.clientData.specialInstructions || 'None'}${
 - 🛠️ We'll bring all standard tools and parts
 - 💳 Payment can be made on completion
 
-Thank you for choosing Usher Fix Plumbing! Is there anything else I can help you with today?`;
+Thank you for choosing Usher Fix Plumbing! Is there anything else I can help you with today?
+
+If not, I'll end our call here. Just say "no" or "that's all" and I'll wrap things up for you.`;
           
           const response = await getResponse(confirmationMessage, stateMachine.conversationHistory);
           stateMachine.conversationHistory.push({ role: 'assistant', content: response });
           stateMachine.currentState = 'booking_complete';
+          
+          // Set a flag indicating we're waiting for customer response about ending call
+          stateMachine.awaitingCallEnd = true;
+          stateMachine.callEndPromptTime = new Date().toISOString();
+          
+          // Add automatic timeout - if no clear response in 30 seconds of conversation, auto-end
+          stateMachine.autoEndTimer = setTimeout(() => {
+            if (stateMachine.currentState === 'booking_complete' && stateMachine.awaitingCallEnd) {
+              console.log('?? Auto-ending call due to timeout after booking completion');
+              stateMachine.pendingTermination = {
+                reason: 'timeout_after_booking',
+                timestamp: new Date().toISOString(),
+                shouldClose: true
+              };
+            }
+          }, 30000); // 30 seconds
           
           console.log('? Appointment created successfully:', appointment.id);
           return response;      } else {
@@ -5466,24 +5563,22 @@ async function sendConfirmationEmail() {
       stateMachine.clientData.phone.replace(/\D/g, '').slice(-6) : 
       Date.now().toString().slice(-6);
     
-    // Prepare booking details for email
-    const bookingDetails = {
-      customerName: stateMachine.clientData.name,
-      customerEmail: stateMachine.clientData.email,
-      phone: stateMachine.clientData.phone,
-      address: stateMachine.clientData.address,
-      appointmentTime: stateMachine.nextSlot,
-      issue: stateMachine.clientData.issueDescription || 'Toilet that won\'t flush',
-      specialInstructions: stateMachine.clientData.specialInstructions || 'None provided',
-      referenceNumber: `USHFX${phoneDigits}`,
-      estimated_duration: estimatedDuration,
-      travel_time: travelTime,
-      totalBufferMinutes: stateMachine.clientData.totalBufferMinutes || 'Not calculated',
-      travelMinutes: stateMachine.clientData.travelMinutes || 'Not calculated',
-      service_category: getServiceCategory(stateMachine.clientData.issueDescription)
-    };
-    
-    try {
+      // Prepare booking details for email
+      const bookingDetails = {
+        customerName: stateMachine.clientData.name,
+        customerEmail: stateMachine.clientData.email,
+        phone: stateMachine.clientData.phone,
+        address: stateMachine.clientData.address,
+        appointmentTime: stateMachine.appointmentTime || stateMachine.nextSlot,
+        issue: stateMachine.clientData.issueDescription || 'Toilet that won\'t flush',
+        specialInstructions: stateMachine.clientData.specialInstructions || 'None provided',
+        referenceNumber: `USHFX${phoneDigits}`,
+        estimated_duration: estimatedDuration,
+        travel_time: travelTime,
+        totalBufferMinutes: stateMachine.clientData.totalBufferMinutes || 'Not calculated',
+        travelMinutes: stateMachine.clientData.travelMinutes || 'Not calculated',
+        service_category: getServiceCategory(stateMachine.clientData.issueDescription)
+      };    try {
       // Try to send email first (using Gmail OAuth2)
       const emailResult = await sendBookingConfirmationEmail(bookingDetails);
       
