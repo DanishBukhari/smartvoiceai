@@ -4,46 +4,46 @@ An intelligent voice AI system for plumbing businesses that handles customer cal
 
 ## 🚀 Features
 
-- 🤖 **Voice AI Assistant** - Robyn, your virtual plumbing assistant
-- 📞 **Twilio Integration** - Handle incoming phone calls with optimized speech processing
-- 🧠 **OpenAI NLP** - Natural language processing for understanding customer issues
-- 🎤 **ElevenLabs TTS** - High-quality text-to-speech responses with caching
-- 📅 **Microsoft Outlook** - Automatic appointment booking with dynamic date handling
-- 👥 **GoHighLevel CRM** - Customer relationship management integration
-- 🚗 **Travel Time Calculation** - Smart scheduling between appointments
-- ⚡ **Performance Optimized** - 2.5-second response times with intelligent caching
-- 🎯 **Pre-generated & Dynamic Responses** - Instant playback for common phrases, and automatic caching of new AI-generated responses
-- 🔄 **State Machine** - Robust conversation flow management
-- 🛡️ **Error Recovery** - Graceful handling of API failures and timeouts
-- 🧠 **Self-Learning Audio Cache** - The bot automatically learns and caches new phrases as MP3s for future use
+- 🤖Voice AI Assistant** - Robyn, your virtual plumbing assistant
+- 📞Twilio Integration** - Handle incoming phone calls with optimized speech processing
+- 🧠OpenAI NLP** - Natural language processing for understanding customer issues
+- 🎤ElevenLabs TTS** - High-quality text-to-speech responses with caching
+- 📅Microsoft Outlook** - Automatic appointment booking with dynamic date handling
+- 👥GoHighLevel CRM** - Customer relationship management integration
+- 🚗Travel Time Calculation** - Smart scheduling between appointments
+- ⚡Performance Optimized** - 2.5-second response times with intelligent caching
+- 🎯Pre-generated & Dynamic Responses** - Instant playback for common phrases, and automatic caching of new AI-generated responses
+- 🔄State Machine** - Robust conversation flow management
+- 🛡️Error Recovery** - Graceful handling of API failures and timeouts
+- 🧠Self-Learning Audio Cache** - The bot automatically learns and caches new phrases as MP3s for future use
 
 ## 🏗️ Tech Stack
 
-- **Backend**: Node.js, Express.js
-- **Voice**: Twilio Voice API with speech recognition
-- **AI**: OpenAI GPT-4 with response caching
-- **TTS**: ElevenLabs with optimization settings
-- **Calendar**: Microsoft Graph API
-- **CRM**: GoHighLevel API
-- **Deployment**: Heroku
-- **Performance**: Response caching, pre-generation, timeout optimization
+-Backend**: Node.js, Express.js
+-Voice**: Twilio Voice API with speech recognition
+-AI**: OpenAI GPT-4 with response caching
+-TTS**: ElevenLabs with optimization settings
+-Calendar**: Microsoft Graph API
+-CRM**: GoHighLevel API
+-Deployment**: Heroku
+-Performance**: Response caching, pre-generation, timeout optimization
 
 ## ⚡ Performance Features
 
 ### Speed Optimizations
-- **2.5-second TTS timeout** - Fast error fallback
-- **Response caching** - Instant repeated phrases
-- **NLP caching** - Faster text processing
-- **Pre-generated audio** - Instant common responses
-- **Dynamic TTS caching** - New AI-generated responses are saved as MP3s and reused automatically
-- **Optimized ElevenLabs settings** - Faster audio generation
+-2.5-second TTS timeout** - Fast error fallback
+-Response caching** - Instant repeated phrases
+-NLP caching** - Faster text processing
+-Pre-generated audio** - Instant common responses
+-Dynamic TTS caching** - New AI-generated responses are saved as MP3s and reused automatically
+-Optimized ElevenLabs settings** - Faster audio generation
 
 ### Reliability Features
-- **Graceful error handling** - No dropped calls on API failures
-- **State machine recovery** - Automatic conversation reset on errors
-- **Dynamic date handling** - Current date appointments (no hardcoded dates)
-- **Travel time calculation** - Smart appointment scheduling
-- **File cleanup** - Automatic audio file management
+-Graceful error handling** - No dropped calls on API failures
+-State machine recovery** - Automatic conversation reset on errors
+-Dynamic date handling** - Current date appointments (no hardcoded dates)
+-Travel time calculation** - Smart appointment scheduling
+-File cleanup** - Automatic audio file management
 
 ## 🚀 Quick Start
 
@@ -58,12 +58,12 @@ An intelligent voice AI system for plumbing businesses that handles customer cal
 
 ### Deployment
 
-1. **Create Heroku app**
+1.Create Heroku app**
 ```bash
 heroku create your-app-name
 ```
 
-2. **Set environment variables**
+2.Set environment variables**
 ```bash
 heroku config:set OPENAI_API_KEY="your-openai-key"
 heroku config:set ELEVENLABS_API_KEY="your-elevenlabs-key"
@@ -78,17 +78,17 @@ heroku config:set GHL_LOCATION_ID="your-ghl-location-id"
 heroku config:set APP_URL="https://your-app.herokuapp.com"
 ```
 
-3. **Pre-generate MP3 files for fast responses**
+3.Pre-generate MP3 files for fast responses**
 ```bash
 node pregen-audio.js
 ```
 - This will create MP3 files in the `public/` directory for instant playback of core/common phrases.
-- **You do NOT need to pre-generate every possible phrase.**
+-You do NOT need to pre-generate every possible phrase.**
 - The bot will automatically generate and cache new AI-generated responses as MP3s in `public/` the first time they are needed.
 - Make sure you have enough ElevenLabs credits before running this command for bulk pre-generation.
 
-4. **Push MP3 files to GitHub**
-- Ensure your `.gitignore` does **not** exclude `public/` or `*.mp3` files.
+4.Push MP3 files to GitHub**
+- Ensure your `.gitignore` doesnot** exclude `public/` or `*.mp3` files.
 - Add and commit the MP3 files:
 ```bash
 git add public/*.mp3
@@ -97,12 +97,12 @@ git push
 ```
 - When you deploy to Heroku, these files will be available for instant use.
 
-5. **Deploy**
+5.Deploy**
 ```bash
 git push heroku main
 ```
 
-6. **Configure Twilio**
+6.Configure Twilio**
    - Set webhook URL in Twilio console to your Heroku app URL
    - Configure voice webhook to point to `/voice` endpoint
 
@@ -143,30 +143,30 @@ PORT=3000
 ## 🎯 Conversation Flow
 
 ### Supported Plumbing Issues
-- **Toilet Problems** - Blocked, leaking, running, not flushing
-- **Hot Water Systems** - No hot water, leaks, age, tank size
-- **Burst Pipes/Leaks** - Water shutoff, flooding assessment
-- **Rain Pumps** - Standalone/submersible, water supply
-- **Roof Leaks** - Active dripping, ceiling damage
-- **New Installations** - Quotes for new systems
-- **General Queries** - Any plumbing-related questions
+-Toilet Problems** - Blocked, leaking, running, not flushing
+-Hot Water Systems** - No hot water, leaks, age, tank size
+-Burst Pipes/Leaks** - Water shutoff, flooding assessment
+-Rain Pumps** - Standalone/submersible, water supply
+-Roof Leaks** - Active dripping, ceiling damage
+-New Installations** - Quotes for new systems
+-General Queries** - Any plumbing-related questions
 
 ### Appointment Booking Process
-1. **Issue Identification** - AI determines problem type
-2. **Screening Questions** - Relevant questions based on issue
-3. **Customer Details** - Name, email, phone, address collection
-4. **Slot Availability** - Dynamic date/time slot finding
-5. **Confirmation** - Appointment confirmation with travel time
-6. **CRM Integration** - Contact saved to GoHighLevel
-7. **Calendar Booking** - Appointment created in Outlook
+1.Issue Identification** - AI determines problem type
+2.Screening Questions** - Relevant questions based on issue
+3.Customer Details** - Name, email, phone, address collection
+4.Slot Availability** - Dynamic date/time slot finding
+5.Confirmation** - Appointment confirmation with travel time
+6.CRM Integration** - Contact saved to GoHighLevel
+7.Calendar Booking** - Appointment created in Outlook
 
 ## 📊 Performance Metrics
 
-- **Average Response Time**: 2.3 seconds
-- **TTS Success Rate**: 70% (ElevenLabs)
-- **Cache Hit Rate**: 85% for repeated phrases
-- **Error Recovery**: 100% (no dropped calls)
-- **Pre-generated Responses**: 40% instant playback
+-Average Response Time**: 2.3 seconds
+-TTS Success Rate**: 70% (ElevenLabs)
+-Cache Hit Rate**: 85% for repeated phrases
+-Error Recovery**: 100% (no dropped calls)
+-Pre-generated Responses**: 40% instant playback
 
 ## 🔍 Monitoring
 
@@ -189,20 +189,20 @@ heroku logs --num 100
 ## 🛠️ Recent Updates
 
 ### Version 2.0 - Performance Optimization
-- ⚡ **2.5-second TTS timeout** for faster responses
-- 🎯 **Pre-generated audio files** for instant common responses
-- 🧹 **Enhanced caching** for both TTS and NLP responses
-- 🛡️ **Improved error handling** with graceful fallbacks
-- 📅 **Dynamic date handling** - no more hardcoded dates
-- 🚗 **Smart travel time calculation** for appointment scheduling
-- 🧹 **Automatic file cleanup** to manage storage
-- 📊 **Performance monitoring** with detailed timing logs
+- ⚡2.5-second TTS timeout** for faster responses
+- 🎯Pre-generated audio files** for instant common responses
+- 🧹Enhanced caching** for both TTS and NLP responses
+- 🛡️Improved error handling** with graceful fallbacks
+- 📅Dynamic date handling** - no more hardcoded dates
+- 🚗Smart travel time calculation** for appointment scheduling
+- 🧹Automatic file cleanup** to manage storage
+- 📊Performance monitoring** with detailed timing logs
 
 ### Version 1.5 - Stability Improvements
-- 🔧 **State machine optimization** for better conversation flow
-- 🎤 **Voice quality improvements** with ElevenLabs optimization
-- 🎯 **Call reliability** with better error recovery
-- 🎯 **Conversation loop prevention** with improved logic
+- 🔧State machine optimization** for better conversation flow
+- 🎤Voice quality improvements** with ElevenLabs optimization
+- 🎯Call reliability** with better error recovery
+- 🎯Conversation loop prevention** with improved logic
 
 ## 📝 Troubleshooting
 
@@ -213,7 +213,7 @@ heroku logs --num 100
 
 ### Outlook API Issues
 - Ensure you have set `OUTLOOK_CLIENT_ID`, `OUTLOOK_CLIENT_SECRET`, `OUTLOOK_TENANT_ID`, and `USER_EMAIL` in your environment.
-- Grant **admin consent** for `Calendars.ReadWrite` permissions in Azure.
+- Grantadmin consent** for `Calendars.ReadWrite` permissions in Azure.
 - Make sure the user email is a real mailbox in your tenant.
 - Use `node test-outlook.js` to verify API access and permissions.
 

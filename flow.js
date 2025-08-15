@@ -1,9 +1,10 @@
-﻿// flow.js - Comprehensive Merged Flow with Travel Time and Email Confirmation
+// flow.js - Comprehensive Merged Flow with Travel Time and Email Confirmation
 const { getResponse } = require('./nlp');
 const { getAccessToken, getLastAppointment, getNextAvailableSlot, isSlotFree, createAppointment } = require('./outlook');
 const { createOrUpdateContact } = require('./ghl');
 const { notifyError, notifyWarning, notifySuccess } = require('./notifications');
 const { sendBookingConfirmationEmail, sendSMSConfirmation } = require('./professional-email-service');
+const { analyzeLocationForBooking, addBookingToCluster } = require('./location-optimizer');
 const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
@@ -73,10 +74,10 @@ function validateAndCorrectInput(input) {
     .replace(/\bh\s*i\s*r\s*a\b/gi, 'Hira')
     .replace(/\bs\s*y\s*e\s*d\s*a?\s*h?\s*i\s*r\s*a\b/gi, 'Syed Ahira')
     .replace(/\bsyed\s+ahira\b/gi, 'Syed Ahira')
-    .replace(/\btoy\b/gi, 'toilet') // Fix "toy" → "toilet"
-    .replace(/\btarget\b/gi, 'toilet') // Fix "target" → "toilet"
-    .replace(/\bbreastband\b/gi, 'Brisbane') // Fix "Breastband" → "Brisbane"
-    .replace(/\bflash\b/gi, 'flush'); // Fix "flash" → "flush"
+    .replace(/\btoy\b/gi, 'toilet') // Fix "toy" ? "toilet"
+    .replace(/\btarget\b/gi, 'toilet') // Fix "target" ? "toilet"
+    .replace(/\bbreastband\b/gi, 'Brisbane') // Fix "Breastband" ? "Brisbane"
+    .replace(/\bflash\b/gi, 'flush'); // Fix "flash" ? "flush"
 
   const corrections = {
     'gmail dot com': 'gmail.com',
@@ -201,9 +202,9 @@ const issueQuestions = {
   'hot water system': [
     "Do you have any hot water at all?",
     "Is it gas, electric, or solar?",
-    "Any leaks—steady drip or fast?",
-    "How old is it—under 10 years or over?",
-    "What's the tank size—125L, 250L, 315L, or other?",
+    "Any leaks�steady drip or fast?",
+    "How old is it�under 10 years or over?",
+    "What's the tank size�125L, 250L, 315L, or other?",
   ],
   'burst/leak': [
     "Has the water been shut off, or is it still running?",
@@ -219,7 +220,7 @@ const issueQuestions = {
     "Is the ceiling bulging or sagging?",
   ],
   'new install/quote': [
-    "What would you like us to quote—new installation, repair, or inspection?",
+    "What would you like us to quote�new installation, repair, or inspection?",
   ],
   'other': [
     "Can you describe the issue or what you need?",
@@ -485,7 +486,7 @@ async function analyzeFastInput(input) {
     });
     
     const analysisTime = Date.now() - startTime;
-    console.log(`⚡ Fast analysis completed in ${analysisTime}ms`);
+    console.log(`? Fast analysis completed in ${analysisTime}ms`);
     
     const result = response.choices[0].message.content.trim().toLowerCase();
     return {
@@ -651,16 +652,16 @@ async function confirmAllDetails() {
   
   const confirmationMessage = 
     `Perfect! Let me confirm all your details step by step:\n\n` +
-    `👤 **Name:** ${stateMachine.clientData.name || 'Not provided'}\n` +
-    `📧 **Email:** ${stateMachine.clientData.email || 'Not provided'}\n` +
-    `📍 **Address:** ${stateMachine.clientData.address || 'Not provided'}\n` +
-    `📞 **Phone:** ${stateMachine.clientData.phone || 'Not provided'}\n\n` +
+    `?? Name: ${stateMachine.clientData.name || 'Not provided'}\n` +
+    `?? Email: ${stateMachine.clientData.email || 'Not provided'}\n` +
+    `?? Address: ${stateMachine.clientData.address || 'Not provided'}\n` +
+    `?? Phone:  ${stateMachine.clientData.phone || 'Not provided'}\n\n` +
     `Are all these details correct? Please say:\n` +
-    `• "YES" if everything is correct\n` +
-    `• "CHANGE NAME" to modify your name\n` +
-    `• "CHANGE EMAIL" to modify your email\n` +
-    `• "CHANGE ADDRESS" to modify your address\n` +
-    `• "CHANGE PHONE" to modify your phone number`;
+    `� "YES" if everything is correct\n` +
+    `� "CHANGE NAME" to modify your name\n` +
+    `� "CHANGE EMAIL" to modify your email\n` +
+    `� "CHANGE ADDRESS" to modify your address\n` +
+    `� "CHANGE PHONE" to modify your phone number`;
   
   const response = await getResponse(confirmationMessage, stateMachine.conversationHistory);
   stateMachine.conversationHistory.push({ role: 'assistant', content: response });
@@ -692,12 +693,12 @@ async function handleDetailModification(detailType) {
  */
 async function autoBookAppointment() {
   try {
-    console.log('🔍 Auto-detecting available appointment slots...');
+    console.log('?? Auto-detecting available appointment slots...');
     
     // Get access token for Google Calendar
     const accessToken = await getAccessToken();
     if (!accessToken) {
-      console.error('❌ Failed to get Google Calendar access token');
+      console.error('? Failed to get Google Calendar access token');
       const response = await getResponse(
         'I apologize, but I\'m having trouble accessing our scheduling system right now. Let me get this sorted for you. I\'ll have someone from our office call you within the next hour to schedule your appointment. Is that okay?',
         stateMachine.conversationHistory
@@ -706,11 +707,38 @@ async function autoBookAppointment() {
       return response;
     }
     
+    // ??? ANALYZE LOCATION FOR OPTIMAL BOOKING
+    console.log('??? Analyzing customer location for travel optimization...');
+    try {
+      const locationAnalysis = await analyzeLocationForBooking(stateMachine.clientData.address);
+      console.log('?? Location analysis result:', locationAnalysis);
+      
+      // Store location analysis for later use
+      stateMachine.clientData.locationAnalysis = locationAnalysis;
+      
+      // If location is not feasible (outside service area), inform customer
+      if (!locationAnalysis.feasible) {
+        const response = await getResponse(locationAnalysis.message, stateMachine.conversationHistory);
+        stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+        return response;
+      }
+      
+      // If high efficiency cluster opportunity, include message in booking confirmation
+      if (locationAnalysis.priority === 'high_efficiency') {
+        console.log('?? High efficiency booking opportunity detected');
+        console.log('?? Cluster message:', locationAnalysis.message);
+      }
+      
+    } catch (locationError) {
+      console.error('? Location analysis failed:', locationError.message);
+      console.log('?? Continuing with standard booking process');
+    }
+    
     // Get next available slot
     const now = new Date();
     const nextSlot = await getNextAvailableSlot(accessToken, now);
     if (!nextSlot) {
-      console.error('❌ No available appointment slots found');
+      console.error('? No available appointment slots found');
       const response = await getResponse(
         'I apologize, but I\'m having trouble accessing our scheduling system right now. Let me get this sorted for you. I\'ll have someone from our office call you within the next hour to schedule your appointment. Is that okay?',
         stateMachine.conversationHistory
@@ -720,7 +748,7 @@ async function autoBookAppointment() {
     }
     
     stateMachine.nextSlot = nextSlot;
-    console.log(`✅ Available slot found: ${nextSlot}`);
+    console.log(`? Available slot found: ${nextSlot}`);
     
     // Format appointment time
     const appointmentTime = nextSlot.toLocaleString('en-AU', {
@@ -768,58 +796,88 @@ async function autoBookAppointment() {
       }
     };
     
-    console.log('📅 Creating Google Calendar appointment...');
-    console.log(`📋 Customer: ${stateMachine.clientData.name}`);
-    console.log(`📧 Email: ${stateMachine.clientData.email}`);
-    console.log(`📍 Address: ${stateMachine.clientData.address}`);
-    console.log(`📞 Phone: ${stateMachine.clientData.phone || 'Not provided'}`);
-    console.log(`⏰ Appointment Time: ${appointmentTime}`);
-    console.log(`🆔 Reference Number: ${referenceNumber}`);
+    console.log('?? Creating Google Calendar appointment...');
+    console.log(`?? Customer: ${stateMachine.clientData.name}`);
+    console.log(`?? Email: ${stateMachine.clientData.email}`);
+    console.log(`?? Address: ${stateMachine.clientData.address}`);
+    console.log(`?? Phone: ${stateMachine.clientData.phone || 'Not provided'}`);
+    console.log(`? Appointment Time: ${appointmentTime}`);
+    console.log(`?? Reference Number: ${referenceNumber}`);
     
     const appointment = await createAppointment(accessToken, eventDetails);
     
     if (appointment && appointment.id) {
-      console.log('✅ APPOINTMENT SUCCESSFULLY BOOKED IN GOOGLE CALENDAR!');
-      console.log(`🆔 Appointment ID: ${appointment.id}`);
-      console.log(`📧 Email confirmation will be sent to: ${stateMachine.clientData.email}`);
+      console.log('? APPOINTMENT SUCCESSFULLY BOOKED IN GOOGLE CALENDAR!');
+      console.log(`?? Appointment ID: ${appointment.id}`);
+      console.log(`?? Email confirmation will be sent to: ${stateMachine.clientData.email}`);
       
       stateMachine.appointmentBooked = true;
       stateMachine.appointmentId = appointment.id;
       stateMachine.referenceNumber = referenceNumber;
       
+      // ??? ADD BOOKING TO LOCATION CLUSTER FOR OPTIMIZATION
+      try {
+        const bookingDetails = {
+          id: appointment.id,
+          date: nextSlot,
+          address: stateMachine.clientData.address,
+          coordinates: stateMachine.clientData.locationAnalysis?.coordinates,
+          customerName: stateMachine.clientData.name,
+          referenceNumber: referenceNumber
+        };
+        
+        addBookingToCluster(bookingDetails);
+        console.log('? Booking added to location cluster for future optimization');
+        
+        // Log cluster efficiency message if applicable
+        if (stateMachine.clientData.locationAnalysis?.priority === 'high_efficiency') {
+          console.log('?? HIGH EFFICIENCY BOOKING: This appointment is clustered with nearby locations');
+        }
+        
+      } catch (clusterError) {
+        console.error('?? Failed to add booking to cluster:', clusterError.message);
+        // Continue with booking process even if clustering fails
+      }
+      
       // Send confirmation email (this will be handled by Google Calendar automatically)
-      console.log('📧 EMAIL CONFIRMATION PROCESS:');
-      console.log('   ✅ Google Calendar will automatically send email invitation');
-      console.log('   ✅ Customer will receive calendar invite with appointment details');
-      console.log('   ✅ Appointment added to customer\'s calendar');
+      console.log('?? EMAIL CONFIRMATION PROCESS:');
+      console.log('   ? Google Calendar will automatically send email invitation');
+      console.log('   ? Customer will receive calendar invite with appointment details');
+      console.log('   ? Appointment added to customer\'s calendar');
       
       // Also send our custom confirmation email with detailed information
       try {
-        console.log('📧 Sending additional professional confirmation email...');
+        console.log('?? Sending additional professional confirmation email...');
         await sendConfirmationEmail();
-        console.log('✅ Additional professional confirmation email sent successfully');
+        console.log('? Additional professional confirmation email sent successfully');
       } catch (emailError) {
-        console.error('⚠️ Custom email failed, but Google Calendar invitation was sent:', emailError.message);
+        console.error('?? Custom email failed, but Google Calendar invitation was sent:', emailError.message);
       }
       
-      const response = `🎉 **Appointment Successfully Booked!**
+      const response = `?? Appointment Successfully Booked!
 
-📅 **Date & Time:** ${appointmentTime}
-📍 **Location:** ${stateMachine.clientData.address}
-🆔 **Reference Number:** ${referenceNumber}
-📧 **Email Confirmation:** Being sent to ${stateMachine.clientData.email}
+?? Date & Time: ${appointmentTime}
+?? Location: ${stateMachine.clientData.address}
+?? Reference Number: ${referenceNumber}
+?? Email Confirmation: Being sent to ${stateMachine.clientData.email}
 
-✅ Your appointment is confirmed! Our technician will arrive within the scheduled time window. 
+? Your appointment is confirmed! Our technician will arrive within the scheduled time window.${
+  stateMachine.clientData.locationAnalysis?.priority === 'high_efficiency' 
+    ? '\n\n?? TRAVEL EFFICIENCY: ' + stateMachine.clientData.locationAnalysis.message.replace('Great news! ', '') 
+    : stateMachine.clientData.locationAnalysis?.distanceFromCenter > 25 
+      ? `\n\n??? LOCATION NOTE: Your address is ${Math.round(stateMachine.clientData.locationAnalysis.distanceFromCenter)}km from our central service area, so we've scheduled extra travel time.`
+      : ''
+}
 
-📧 **You will receive:**
-• Calendar invitation with appointment details
-• Email confirmation with our contact information
-• Reminder notifications before your appointment
+?? You will receive:
+� Calendar invitation with appointment details
+� Email confirmation with our contact information
+� Reminder notifications before your appointment
 
 You can:
-• Say "CANCEL APPOINTMENT" to cancel
-• Say "RESCHEDULE" to change the time
-• Say "POSTPONE" to delay the appointment
+� Say "CANCEL APPOINTMENT" to cancel
+� Say "RESCHEDULE" to change the time
+� Say "POSTPONE" to delay the appointment
 
 Is there anything else I can help you with?`;
       
@@ -831,8 +889,8 @@ Is there anything else I can help you with?`;
     }
     
   } catch (error) {
-    console.error('❌ APPOINTMENT BOOKING FAILED:', error.message);
-    console.error('📋 Error Details:', {
+    console.error('? APPOINTMENT BOOKING FAILED:', error.message);
+    console.error('?? Error Details:', {
       customerName: stateMachine.clientData.name,
       customerEmail: stateMachine.clientData.email,
       customerAddress: stateMachine.clientData.address,
@@ -870,9 +928,9 @@ async function handleAppointmentCancellation() {
     stateMachine.appointmentId = null;
     
     const response = await getResponse(
-      `✅ **Appointment Cancelled Successfully**\n\n` +
-      `🆔 **Cancelled Reference:** ${cancelledId}\n` +
-      `📧 **Cancellation confirmation** will be sent to ${stateMachine.clientData.email}\n\n` +
+      `? Appointment Cancelled Successfully\n\n` +
+      `?? Cancelled Reference: ${cancelledId}\n` +
+      `?? Cancellation confirmation will be sent to ${stateMachine.clientData.email}\n\n` +
       `Your appointment has been cancelled. If you need to reschedule or book a new appointment, just let me know!`,
       stateMachine.conversationHistory
     );
@@ -881,7 +939,7 @@ async function handleAppointmentCancellation() {
     return response;
     
   } catch (error) {
-    console.error('❌ Cancellation failed:', error);
+    console.error('? Cancellation failed:', error);
     const response = await getResponse(
       'I encountered an issue while cancelling your appointment. Please call our office directly, or I can have someone call you back to assist with the cancellation. What would you prefer?',
       stateMachine.conversationHistory
@@ -907,10 +965,10 @@ async function handleAppointmentPostponement() {
   const response = await getResponse(
     `I understand you need to postpone your appointment (Reference: ${stateMachine.appointmentId}).\n\n` +
     `When would you prefer to reschedule? Please tell me:\n` +
-    `• "TOMORROW" for the next available slot tomorrow\n` +
-    `• "NEXT WEEK" for next week\n` +
-    `• A specific day like "FRIDAY" or "NEXT MONDAY"\n` +
-    `• Or say "CALL ME" and we'll call you to reschedule`,
+    `� "TOMORROW" for the next available slot tomorrow\n` +
+    `� "NEXT WEEK" for next week\n` +
+    `� A specific day like "FRIDAY" or "NEXT MONDAY"\n` +
+    `� Or say "CALL ME" and we'll call you to reschedule`,
     stateMachine.conversationHistory
   );
   
@@ -952,11 +1010,11 @@ async function handleDetailCollection(input, extractedData) {
     // If no specific change mentioned, ask for clarification
     const response = await getResponse(
       'Which detail would you like to change? Please say:\n' +
-      '• "CHANGE NAME" for your name\n' +
-      '• "CHANGE EMAIL" for your email\n' +
-      '• "CHANGE ADDRESS" for your address\n' +
-      '• "CHANGE PHONE" for your phone number\n' +
-      '• or "YES" if everything is actually correct',
+      '� "CHANGE NAME" for your name\n' +
+      '� "CHANGE EMAIL" for your email\n' +
+      '� "CHANGE ADDRESS" for your address\n' +
+      '� "CHANGE PHONE" for your phone number\n' +
+      '� or "YES" if everything is actually correct',
       stateMachine.conversationHistory
     );
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
@@ -1033,7 +1091,7 @@ async function handleDetailCollection(input, extractedData) {
       if (detailType === 'email') {
         valueToSave = correctEmailFromTranscription(valueToSave);
         if (!validateEmail(valueToSave)) {
-          console.log(`❌ Invalid email after confirmation: ${valueToSave}`);
+          console.log(`? Invalid email after confirmation: ${valueToSave}`);
           stateMachine.spellingConfirmation = false;
           stateMachine.tempCollectedValue = null;
           const response = await getResponse(
@@ -1050,7 +1108,7 @@ async function handleDetailCollection(input, extractedData) {
       stateMachine.spellingConfirmation = false;
       stateMachine.tempCollectedValue = null;
       
-      console.log(`✅ Confirmed ${detailType}: ${stateMachine.clientData[detailType]}`);
+      console.log(`? Confirmed ${detailType}: ${stateMachine.clientData[detailType]}`);
       
       // If we're modifying a detail during confirmation, go back to confirmation
       if (stateMachine.modifyingDetail) {
@@ -1141,13 +1199,13 @@ function getServiceCategory(issueDescription) {
 }
 
 async function calculateTravelTime(origin, destination) {
-  console.log('🚗 calculateTravelTime: Calculating from', origin, 'to', destination);
+  console.log('?? calculateTravelTime: Calculating from', origin, 'to', destination);
   
   // Check cache first
   const cacheKey = `${origin.toLowerCase()}|${destination.toLowerCase()}`;
   if (travelTimeCache.has(cacheKey)) {
     const cached = travelTimeCache.get(cacheKey);
-    console.log('🔄 Using cached travel time:', cached, 'minutes');
+    console.log('?? Using cached travel time:', cached, 'minutes');
     return cached;
   }
   
@@ -1156,14 +1214,14 @@ async function calculateTravelTime(origin, destination) {
     const formattedOrigin = formatAustralianAddress(origin);
     const formattedDestination = formatAustralianAddress(destination);
     
-    console.log('📍 Formatted addresses:', {
+    console.log('?? Formatted addresses:', {
       origin: formattedOrigin,
       destination: formattedDestination
     });
     
     // If same location or very similar
     if (formattedOrigin.toLowerCase() === formattedDestination.toLowerCase()) {
-      console.log('📍 Same location, returning 30 minutes for job completion buffer');
+      console.log('?? Same location, returning 30 minutes for job completion buffer');
       const result = 30; // 30 minutes for finishing previous job even at same location
       travelTimeCache.set(cacheKey, result);
       return result;
@@ -1181,10 +1239,10 @@ async function calculateTravelTime(origin, destination) {
         );
         if (googleResult && googleResult > 0) {
           travelTimeMinutes = googleResult;
-          console.log('🗺️ Google Maps Result:', travelTimeMinutes, 'minutes');
+          console.log('??? Google Maps Result:', travelTimeMinutes, 'minutes');
         }
       } catch (googleError) {
-        console.log('⚠️ Google Maps failed, trying fallback:', googleError.message);
+        console.log('?? Google Maps failed, trying fallback:', googleError.message);
       }
     }
     
@@ -1220,18 +1278,18 @@ Return ONLY the number of minutes as an integer. Be realistic - Brisbane metro a
         const aiResult = parseInt(response.choices[0].message.content.trim());
         if (!isNaN(aiResult) && aiResult > 0) {
           travelTimeMinutes = aiResult;
-          console.log('🤖 OpenAI Result:', travelTimeMinutes, 'minutes');
+          console.log('?? OpenAI Result:', travelTimeMinutes, 'minutes');
         }
       } catch (aiError) {
-        console.log('⚠️ OpenAI travel estimation failed:', aiError.message);
+        console.log('?? OpenAI travel estimation failed:', aiError.message);
       }
     }
     
     // Fallback to coordinate-based calculation with Brisbane-specific routing
     if (travelTimeMinutes === 0) {
-      console.log('📊 Using coordinate-based fallback calculation');
+      console.log('?? Using coordinate-based fallback calculation');
       travelTimeMinutes = await calculateAustralianDistanceBasedTime(formattedOrigin, formattedDestination);
-      console.log('🧮 Coordinate-based Result:', travelTimeMinutes, 'minutes');
+      console.log('?? Coordinate-based Result:', travelTimeMinutes, 'minutes');
     }
     
     // Ensure minimum time (5 minutes) and reasonable maximum (120 minutes for Brisbane metro)
@@ -1240,11 +1298,11 @@ Return ONLY the number of minutes as an integer. Be realistic - Brisbane metro a
     // Cache the result
     travelTimeCache.set(cacheKey, finalResult);
     
-    console.log('✅ Final travel time:', finalResult, 'minutes');
+    console.log('? Final travel time:', finalResult, 'minutes');
     return finalResult;
     
   } catch (error) {
-    console.error('❌ calculateTravelTime: Comprehensive error', error.message);
+    console.error('? calculateTravelTime: Comprehensive error', error.message);
     const defaultTime = 30; // Default 30 minutes
     travelTimeCache.set(cacheKey, defaultTime);
     return defaultTime;
@@ -1260,7 +1318,7 @@ async function retryApiCall(apiFunction, maxRetries = 3, delayMs = 1000) {
       if (attempt === maxRetries) throw error;
       
       const delay = delayMs * Math.pow(2, attempt - 1); // Exponential backoff
-      console.log(`🔄 API retry ${attempt}/${maxRetries} after ${delay}ms delay`);
+      console.log(`?? API retry ${attempt}/${maxRetries} after ${delay}ms delay`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -1350,15 +1408,15 @@ async function calculateGoogleMapsDistance(origin, destination) {
       
       // Provide specific guidance for common errors
       if (data.status === 'REQUEST_DENIED') {
-        console.log('🔧 GOOGLE MAPS SETUP REQUIRED:');
+        console.log('?? GOOGLE MAPS SETUP REQUIRED:');
         console.log('   1. Enable billing: https://console.cloud.google.com/billing');
         console.log('   2. Enable Distance Matrix API: https://console.cloud.google.com/apis/library/distancematrix.googleapis.com');
         console.log('   3. Enable Geocoding API: https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com');
         console.log('   4. Run test: node test-google-maps-travel-time.js');
       } else if (data.status === 'OVER_DAILY_LIMIT') {
-        console.log('⚠️ Google Maps daily quota exceeded, using OpenAI fallback');
+        console.log('?? Google Maps daily quota exceeded, using OpenAI fallback');
       } else if (data.status === 'OVER_QUERY_LIMIT') {
-        console.log('⚠️ Google Maps rate limit exceeded, using OpenAI fallback');
+        console.log('?? Google Maps rate limit exceeded, using OpenAI fallback');
       }
       
       return null;
@@ -1691,34 +1749,18 @@ function calculateAustralianDistanceBasedTime(origin, destination) {
   return 45; // Default for Australian metro areas
 }
 
-// Calculate distance between two coordinates using Haversine formula
-function calculateDistance(coord1, coord2) {
-  const R = 6371; // Earth's radius in kilometers
-  const dLat = toRadians(coord2.lat - coord1.lat);
-  const dLng = toRadians(coord2.lng - coord1.lng);
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(toRadians(coord1.lat)) * Math.cos(toRadians(coord2.lat)) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c; // Distance in kilometers
-}
-
-function toRadians(degrees) {
-  return degrees * (Math.PI / 180);
-}
-
 async function handleInput(input, confidence = 1.0) {
-  console.log('🔄 === COMPREHENSIVE HANDLE INPUT START ===');
-  console.log('📝 Input:', input);
-  console.log('🎯 Confidence:', confidence);
-  console.log('📍 Current State:', stateMachine.currentState);
-  console.log('❓ Question Index:', stateMachine.questionIndex);
-  console.log('👤 Client Data Keys:', Object.keys(stateMachine.clientData));
+  console.log('?? === COMPREHENSIVE HANDLE INPUT START ===');
+  console.log('?? Input:', input);
+  console.log('?? Confidence:', confidence);
+  console.log('?? Current State:', stateMachine.currentState);
+  console.log('? Question Index:', stateMachine.questionIndex);
+  console.log('?? Client Data Keys:', Object.keys(stateMachine.clientData));
   
   // STEP 1: Apply input validation and correction FIRST
   if (input && typeof input === 'string') {
     input = validateAndCorrectInput(input);
-    console.log('✨ Corrected input:', input);
+    console.log('? Corrected input:', input);
   }
   
   // STEP 2: Fast confidence and completeness check
@@ -1732,7 +1774,7 @@ async function handleInput(input, confidence = 1.0) {
   // STEP 2.5: Check for quick responses to reduce latency
   const quickResponse = getQuickResponse(input);
   if (quickResponse && stateMachine.currentState === 'start') {
-    console.log('⚡ Using quick response for faster reply');
+    console.log('? Using quick response for faster reply');
     stateMachine.currentState = 'general';
     stateMachine.conversationHistory.push({ role: 'user', content: input });
     stateMachine.conversationHistory.push({ role: 'assistant', content: quickResponse });
@@ -1762,7 +1804,7 @@ async function handleInput(input, confidence = 1.0) {
 
     // PRIORITY 2: Handle pending termination
     if (stateMachine.pendingTermination) {
-      console.log('📞 Processing call termination');
+      console.log('?? Processing call termination');
       return await terminateCall(input);
     }
 
@@ -1836,7 +1878,7 @@ async function handleInput(input, confidence = 1.0) {
         break;
         
       default:
-        console.log('⚠️ Unknown state, attempting intelligent recovery...');
+        console.log('?? Unknown state, attempting intelligent recovery...');
         response = await handleUnknownState(input);
         break;
     }
@@ -1846,22 +1888,22 @@ async function handleInput(input, confidence = 1.0) {
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     }
     
-    console.log('🔄 === COMPREHENSIVE HANDLE INPUT END ===');
-    console.log('✅ Response:', response);
-    console.log('📍 New State:', stateMachine.currentState);
-    console.log('🗃️ Conversation Length:', stateMachine.conversationHistory.length);
+    console.log('?? === COMPREHENSIVE HANDLE INPUT END ===');
+    console.log('? Response:', response);
+    console.log('?? New State:', stateMachine.currentState);
+    console.log('??? Conversation Length:', stateMachine.conversationHistory.length);
     
     return response;
     
   } catch (error) {
-    console.error('❌ handleInput comprehensive error:', error);
+    console.error('? handleInput comprehensive error:', error);
     return await handleErrorWithRecovery(input, error);
   }
 }
 
 // Comprehensive error recovery with context preservation
 async function handleErrorWithRecovery(input, error) {
-  console.log('🔧 Attempting comprehensive error recovery...');
+  console.log('?? Attempting comprehensive error recovery...');
   
   // Log error for monitoring
   if (typeof notifyError === 'function') {
@@ -1888,7 +1930,7 @@ async function handleErrorWithRecovery(input, error) {
 
 // Handle unknown state with intelligent recovery
 async function handleUnknownState(input) {
-  console.log('🔍 Analyzing input for intelligent state recovery...');
+  console.log('?? Analyzing input for intelligent state recovery...');
   
   try {
     // Use fast analysis to determine intent
@@ -1897,7 +1939,7 @@ async function handleUnknownState(input) {
     // Route based on detected intent
     
     if (analysis.issue && analysis.issue.includes('toilet')) {
-      console.log('🚽 Toilet issue detected');
+      console.log('?? Toilet issue detected');
       stateMachine.currentState = 'toilet';
       stateMachine.issueType = 'toilet';
       stateMachine.questionIndex = 0;
@@ -1905,7 +1947,7 @@ async function handleUnknownState(input) {
     }
     
     if (analysis.issue && (analysis.issue.includes('water') || analysis.issue.includes('hot'))) {
-      console.log('🔥 Hot water issue detected');
+      console.log('?? Hot water issue detected');
       stateMachine.currentState = 'hot water system';
       stateMachine.issueType = 'hot water system';
       stateMachine.questionIndex = 0;
@@ -1913,7 +1955,7 @@ async function handleUnknownState(input) {
     }
     
     if (analysis.issue && (analysis.issue.includes('leak') || analysis.issue.includes('burst'))) {
-      console.log('💧 Leak/burst issue detected');
+      console.log('?? Leak/burst issue detected');
       stateMachine.currentState = 'burst/leak';
       stateMachine.issueType = 'burst/leak';
       stateMachine.questionIndex = 0;
@@ -1921,7 +1963,7 @@ async function handleUnknownState(input) {
     }
     
     // Fallback to general handling
-    console.log('🔄 Routing to general handling');
+    console.log('?? Routing to general handling');
     stateMachine.currentState = 'general';
     return await handleGeneralQuery(input);
     
@@ -2013,7 +2055,7 @@ async function handleStart(input) {
     'pipe': "Has the water been shut off, or is it still running?",
     'pump': "Is the pump standalone or submersible?",
     'roof': "Is water dripping inside right now?",
-    'quote': "What would you like us to quote—new installation, repair, or inspection?"
+    'quote': "What would you like us to quote�new installation, repair, or inspection?"
   };
   
   // Quick check for common keywords
@@ -2187,7 +2229,7 @@ async function askBooking(input) {
     if ((lowerInput.includes('yes') || lowerInput.includes('go ahead') || lowerInput.includes('proceed')) && 
         hasName && hasEmail && hasAddress) {
       
-      console.log('🚀 PROCEEDING TO ACTUAL BOOKING - All details confirmed!');
+      console.log('?? PROCEEDING TO ACTUAL BOOKING - All details confirmed!');
       
       // Store the collected details if not already stored
       if (!stateMachine.clientData.name) stateMachine.clientData.name = hasName;
@@ -2203,7 +2245,7 @@ async function askBooking(input) {
       stateMachine.currentState = 'booking_in_progress';
       
       // Execute the booking process
-      console.log('📅 EXECUTING BOOKING PROCESS...');
+      console.log('?? EXECUTING BOOKING PROCESS...');
       return await executeActualBooking();
     }
     
@@ -2275,8 +2317,8 @@ function extractAddress(input) {
 
 // NEW FUNCTION: Execute the actual booking process
 async function executeActualBooking() {
-  console.log('🚀 EXECUTING ACTUAL BOOKING PROCESS');
-  console.log('📋 Customer Details:');
+  console.log('?? EXECUTING ACTUAL BOOKING PROCESS');
+  console.log('?? Customer Details:');
   console.log('   Name:', stateMachine.clientData.name);
   console.log('   Email:', stateMachine.clientData.email);
   console.log('   Address:', stateMachine.clientData.address);
@@ -2284,33 +2326,33 @@ async function executeActualBooking() {
   
   try {
     // Step 1: Get Google Calendar access token
-    console.log('🔑 Getting Google Calendar access token...');
+    console.log('?? Getting Google Calendar access token...');
     const accessToken = await getAccessToken();
     if (!accessToken) {
-      console.error('❌ Failed to get Google Calendar access token');
+      console.error('? Failed to get Google Calendar access token');
       return "I'm sorry, I'm having trouble accessing our booking system right now. I'll have someone from our office call you back within the hour to schedule your appointment.";
     }
-    console.log('✅ Google Calendar access token obtained');
+    console.log('? Google Calendar access token obtained');
     
     // Step 2: Find next available appointment slot
-    console.log('📅 Finding next available appointment slot...');
+    console.log('?? Finding next available appointment slot...');
     const now = new Date();
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     tomorrow.setHours(14, 0, 0, 0); // 2 PM tomorrow as requested
     
     const nextSlot = await getNextAvailableSlot(accessToken, tomorrow);
     if (!nextSlot) {
-      console.error('❌ No available appointment slots found');
+      console.error('? No available appointment slots found');
       return "I'm sorry, I'm having trouble finding available appointment slots right now. I'll have someone from our office call you back within the hour to schedule your appointment.";
     }
-    console.log('✅ Available slot found:', nextSlot.toISOString());
+    console.log('? Available slot found:', nextSlot.toISOString());
     
     // Step 3: Generate reference number
     const referenceNumber = `USHFX${stateMachine.clientData.phone ? stateMachine.clientData.phone.slice(-4) : Date.now().toString().slice(-4)}`;
-    console.log('🆔 Generated reference number:', referenceNumber);
+    console.log('?? Generated reference number:', referenceNumber);
     
     // Step 4: Create Google Calendar appointment
-    console.log('📅 Creating Google Calendar appointment...');
+    console.log('?? Creating Google Calendar appointment...');
     const eventDetails = {
       summary: `Plumbing Service - ${stateMachine.clientData.name}`,
       description: `**PLUMBING SERVICE APPOINTMENT**\n\n` +
@@ -2345,8 +2387,8 @@ async function executeActualBooking() {
     const appointment = await createAppointment(accessToken, eventDetails);
     
     if (appointment && appointment.id) {
-      console.log('✅ APPOINTMENT SUCCESSFULLY CREATED IN GOOGLE CALENDAR!');
-      console.log('🆔 Appointment ID:', appointment.id);
+      console.log('? APPOINTMENT SUCCESSFULLY CREATED IN GOOGLE CALENDAR!');
+      console.log('?? Appointment ID:', appointment.id);
       
       // Step 5: Store booking details
       stateMachine.appointmentBooked = true;
@@ -2355,12 +2397,12 @@ async function executeActualBooking() {
       stateMachine.nextSlot = nextSlot;
       
       // Step 6: Send confirmation email
-      console.log('📧 Sending confirmation email...');
+      console.log('?? Sending confirmation email...');
       try {
         await sendConfirmationEmail();
-        console.log('✅ Confirmation email sent successfully');
+        console.log('? Confirmation email sent successfully');
       } catch (emailError) {
-        console.error('⚠️ Email sending failed:', emailError.message);
+        console.error('?? Email sending failed:', emailError.message);
         // Don't fail the booking due to email issues
       }
       
@@ -2384,16 +2426,16 @@ async function executeActualBooking() {
                            `You'll receive a confirmation email at ${stateMachine.clientData.email} with all the details. ` +
                            `Our plumber will be there to help with your blocked drain. Thank you, ${stateMachine.clientData.name}!`;
       
-      console.log('🎉 BOOKING COMPLETED SUCCESSFULLY!');
+      console.log('?? BOOKING COMPLETED SUCCESSFULLY!');
       return successMessage;
       
     } else {
-      console.error('❌ Failed to create appointment in Google Calendar');
+      console.error('? Failed to create appointment in Google Calendar');
       return "I'm sorry, I'm having trouble booking the appointment right now. I'll have someone from our office call you back within the hour to schedule your appointment manually.";
     }
     
   } catch (error) {
-    console.error('❌ Error during booking process:', error);
+    console.error('? Error during booking process:', error);
     return "I'm sorry, I encountered an error while booking your appointment. I'll have someone from our office call you back within the hour to schedule your appointment manually.";
   }
 }
@@ -2575,15 +2617,15 @@ async function collectClientDetails(input) {
   
   const details = ['name', 'email', 'address']; 
   
-  // 🔥 CRITICAL FIX: Assign phone number from caller first
+  // ?? CRITICAL FIX: Assign phone number from caller first
   if (stateMachine.callerPhoneNumber && !stateMachine.clientData.phone) {
     stateMachine.clientData.phone = stateMachine.callerPhoneNumber;
-    console.log('📱 Phone auto-assigned from caller:', stateMachine.callerPhoneNumber);
+    console.log('?? Phone auto-assigned from caller:', stateMachine.callerPhoneNumber);
   }
 
-  // 🔥 SMART CONTEXT EXTRACTION: Look for missing data in conversation history
+  // ?? SMART CONTEXT EXTRACTION: Look for missing data in conversation history
   if (!stateMachine.clientData.email || !stateMachine.clientData.address || !stateMachine.clientData.name) {
-    console.log('🔍 Scanning conversation history for missing details...');
+    console.log('?? Scanning conversation history for missing details...');
     
     for (const msg of stateMachine.conversationHistory) {
       if (msg.role === 'user') {
@@ -2594,7 +2636,7 @@ async function collectClientDetails(input) {
           const emailMatch = content.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
           if (emailMatch) {
             stateMachine.clientData.email = emailMatch[0].toLowerCase();
-            console.log('📧 Email extracted from history:', stateMachine.clientData.email);
+            console.log('?? Email extracted from history:', stateMachine.clientData.email);
           }
         }
         
@@ -2602,7 +2644,7 @@ async function collectClientDetails(input) {
         if (!stateMachine.clientData.address) {
           if (/\d+\s+[a-zA-Z\s]+(?:street|st|road|rd|avenue|ave),?\s*[a-zA-Z\s]*,?\s*(?:australia|qld|nsw|vic)/i.test(content)) {
             stateMachine.clientData.address = content.trim();
-            console.log('🏠 Address extracted from history:', stateMachine.clientData.address);
+            console.log('?? Address extracted from history:', stateMachine.clientData.address);
           }
         }
         
@@ -2613,7 +2655,7 @@ async function collectClientDetails(input) {
             const extractedName = nameMatch[1].trim().replace(/[,\.]+$/, ''); // Remove trailing punctuation
             if (isValidName(extractedName)) {
               stateMachine.clientData.name = extractedName;
-              console.log('👤 Name extracted from history:', stateMachine.clientData.name);
+              console.log('?? Name extracted from history:', stateMachine.clientData.name);
             }
           }
         }
@@ -2644,7 +2686,7 @@ async function collectClientDetails(input) {
         
         // Store as temp_name and request confirmation  
         stateMachine.clientData.temp_name = extractedName;
-        console.log('✅ Name extracted, requesting confirmation:', extractedName);
+        console.log('? Name extracted, requesting confirmation:', extractedName);
         return await requestDetailConfirmation('name', extractedName);
         
         // Move to next detail
@@ -2667,7 +2709,7 @@ async function collectClientDetails(input) {
         if (extractedEmail && extractedEmail[0]) {
           // Store as temp_email and request spelling confirmation
           stateMachine.clientData.temp_email = extractedEmail[0].toLowerCase();
-          console.log('✅ Email extracted, requesting spelling confirmation:', extractedEmail[0]);
+          console.log('? Email extracted, requesting spelling confirmation:', extractedEmail[0]);
           return await requestDetailConfirmation('email', extractedEmail[0].toLowerCase());
         } else {
           // Email format not recognized, ask again
@@ -2699,33 +2741,50 @@ async function collectClientDetails(input) {
           }
           
           stateMachine.clientData.address = formattedAddress;
-          console.log('✅ Address accepted:', formattedAddress);
+          console.log('? Address accepted:', formattedAddress);
           
-          // 🚗 IMMEDIATELY CALCULATE TRAVEL TIME AND DETERMINE EARLIEST APPOINTMENT
-          console.log('🧮 Calculating travel time and determining earliest available appointment...');
+          // ?? SMART LOCATION ANALYSIS FOR OPTIMAL BOOKING
+          console.log('??? Analyzing location for optimal booking and travel efficiency...');
           
           try {
+            // Analyze location for clustering opportunities
+            const locationAnalysis = await analyzeLocationForBooking(formattedAddress);
+            console.log('?? Location analysis result:', locationAnalysis);
+            
+            if (!locationAnalysis.feasible) {
+              // Location is outside service area
+              const response = await getResponse(locationAnalysis.message, stateMachine.conversationHistory);
+              stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+              return response;
+            }
+            
+            // Store location analysis results
+            stateMachine.clientData.locationAnalysis = locationAnalysis;
+            
+            // ?? CALCULATE TRAVEL TIME AND DETERMINE EARLIEST APPOINTMENT
+            console.log('?? Calculating travel time and determining earliest available appointment...');
+            
             // Get last job location (Location X)
             const lastJobLocation = "142 Queen Street, Brisbane, QLD, Australia"; // Default last job location
             const customerLocation = formattedAddress; // Location Y (customer's address)
             
-            console.log(`📍 Travel calculation: ${lastJobLocation} → ${customerLocation}`);
+            console.log(`?? Travel calculation: ${lastJobLocation} ? ${customerLocation}`);
             
             // Calculate travel time from X to Y
             const travelTime = await calculateTravelTime(lastJobLocation, customerLocation);
-            console.log(`🚗 Travel time calculated: ${travelTime}`);
+            console.log(`?? Travel time calculated: ${travelTime}`);
             
             // Parse travel time to get minutes
             const travelMinutes = extractMinutesFromTravelTime(travelTime);
-            console.log(`⏱️ Travel time in minutes: ${travelMinutes}`);
+            console.log(`?? Travel time in minutes: ${travelMinutes}`);
             
             // Calculate total buffer time
             const jobCompletionBuffer = 30; // 30 minutes constant for job completion
             const totalBufferMinutes = jobCompletionBuffer + travelMinutes;
             
-            console.log(`📊 Scheduling calculation:`);
+            console.log(`?? Scheduling calculation:`);
             console.log(`   Job completion buffer: ${jobCompletionBuffer} minutes`);
-            console.log(`   Travel time (X→Y): ${travelMinutes} minutes`);
+            console.log(`   Travel time (X?Y): ${travelMinutes} minutes`);
             console.log(`   Total buffer needed: ${totalBufferMinutes} minutes`);
             
             // Calculate earliest available appointment time
@@ -2743,7 +2802,7 @@ async function collectClientDetails(input) {
               hour12: true
             });
             
-            console.log(`🎯 Earliest available appointment: ${formattedTime}`);
+            console.log(`?? Earliest available appointment: ${formattedTime}`);
             
             // Store travel and scheduling information
             stateMachine.clientData.travelTime = travelTime;
@@ -2751,9 +2810,21 @@ async function collectClientDetails(input) {
             stateMachine.clientData.earliestAppointment = roundedTime;
             stateMachine.clientData.totalBufferMinutes = totalBufferMinutes;
             
+            // ?? PRESENT LOCATION-OPTIMIZED BOOKING OPTIONS
+            let locationMessage = '';
+            if (locationAnalysis.priority === 'high_efficiency') {
+              // High efficiency cluster opportunity
+              locationMessage = locationAnalysis.message + '\n\n';
+            } else if (locationAnalysis.priority === 'standard') {
+              // Standard booking - mention distance if far
+              if (locationAnalysis.distanceFromCenter > 25) {
+                locationMessage = `I can service your location at ${formattedAddress}, though it's ${Math.round(locationAnalysis.distanceFromCenter)} km from our central area, which means additional travel time. `;
+              }
+            }
+            
             // Ask if customer has any special instructions before proposing appointment
             const response = await getResponse(
-              `Perfect! I've got your address. Before I book your appointment, do you have any special instructions for the plumber? For example, do you have any pets, or is there anything specific about accessing your property that we should know?`,
+              `Perfect! I've got your address. ${locationMessage}Before I book your appointment, do you have any special instructions for the plumber? For example, do you have any pets, or is there anything specific about accessing your property that we should know?`,
               stateMachine.conversationHistory
             );
             stateMachine.conversationHistory.push({ role: 'assistant', content: response });
@@ -2762,9 +2833,29 @@ async function collectClientDetails(input) {
             stateMachine.currentState = 'collect_special_instructions';
             return response;
             
-          } catch (travelError) {
-            console.error('❌ Travel time calculation failed:', travelError.message);
-            // Continue with default scheduling if travel calculation fails
+          } catch (locationError) {
+            console.error('? Location analysis failed:', locationError.message);
+            
+            // Fall back to basic travel time calculation
+            try {
+              const lastJobLocation = "142 Queen Street, Brisbane, QLD, Australia";
+              const travelTime = await calculateTravelTime(lastJobLocation, formattedAddress);
+              const travelMinutes = extractMinutesFromTravelTime(travelTime);
+              const totalBufferMinutes = 30 + travelMinutes;
+              const now = new Date();
+              const earliestTime = new Date(now.getTime() + totalBufferMinutes * 60 * 1000);
+              const roundedTime = roundToNextAppointmentSlot(earliestTime);
+              
+              stateMachine.clientData.travelTime = travelTime;
+              stateMachine.clientData.travelMinutes = travelMinutes;
+              stateMachine.clientData.earliestAppointment = roundedTime;
+              stateMachine.clientData.totalBufferMinutes = totalBufferMinutes;
+              
+            } catch (travelError) {
+              console.error('? Travel time calculation also failed:', travelError.message);
+            }
+            
+            // Continue with default scheduling
             const response = await getResponse(
               `Perfect! I've got your address. Before I book your appointment, do you have any special instructions for the plumber?`,
               stateMachine.conversationHistory
@@ -2802,7 +2893,7 @@ async function collectClientDetails(input) {
   } else {
     // All details collected, transition to booking
     console.log('collectClientDetails: All details collected, transitioning to booking');
-    console.log('📋 Final customer data:', {
+    console.log('?? Final customer data:', {
       name: stateMachine.clientData.name,
       email: stateMachine.clientData.email, 
       address: stateMachine.clientData.address,
@@ -2828,12 +2919,11 @@ async function collectClientDetails(input) {
     stateMachine.clientData.issueDescription = stateMachine.clientData.issueDescription || 'Burst pipe or leak';
     let response;
     if (stateMachine.clientData.urgent) {
-      // For urgent, directly compute and propose next slot
-      response = await handleAppointmentBooking('asap'); // Pass 'asap' to indicate urgent
+      // For urgent, use location-optimized auto booking
+      response = await autoBookAppointment();
     } else {
-     response = await getResponse("When would you like your appointment? Please give me a date & time (e.g. “tomorrow at 9 AM UTC”).", stateMachine.conversationHistory);
-      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-      console.log('collectClientDetails: Booking prompt', response);
+      // For non-urgent, also use location-optimized auto booking
+      response = await autoBookAppointment();
     }
     return response;
   }
@@ -3131,7 +3221,7 @@ async function collectSpecialInstructions(input) {
     const appointment = await createAppointment(accessToken, eventDetails);
     if (appointment) {
       lastBookedJobLocation = formattedAddress;
-      console.log('✅ Updated last booked job location to:', lastBookedJobLocation);
+      console.log('? Updated last booked job location to:', lastBookedJobLocation);
       stateMachine.bookingRetryCount = 0;
 
       const bookingDetails = {
@@ -3150,11 +3240,11 @@ async function collectSpecialInstructions(input) {
 
       try {
         await sendBookingConfirmationEmail(bookingDetails);
-        console.log('✅ Confirmation email sent successfully');
+        console.log('? Confirmation email sent successfully');
         stateMachine.clientData.emailConfirmationSent = true;
         stateMachine.clientData.emailSentTimestamp = new Date().toISOString();
       } catch (emailError) {
-        console.error('📧 Email sending failed:', emailError);
+        console.error('?? Email sending failed:', emailError);
         // Notify email failure
         await notifyWarning('Booking confirmation email failed', {
           customerName: stateMachine.clientData.name,
@@ -3165,10 +3255,10 @@ async function collectSpecialInstructions(input) {
         
         try {
           await sendSMSConfirmation(bookingDetails);
-          console.log('✅ SMS confirmation sent as backup');
+          console.log('? SMS confirmation sent as backup');
           stateMachine.clientData.smsConfirmationSent = true;
         } catch (smsError) {
-          console.error('📱 SMS sending failed:', smsError);
+          console.error('?? SMS sending failed:', smsError);
           // Notify both email and SMS failures - critical
           await notifyError(
             new Error(`Both email and SMS confirmations failed. Email: ${emailError.message}, SMS: ${smsError.message}`),
@@ -3195,22 +3285,22 @@ async function collectSpecialInstructions(input) {
       });
 
       let travelInfo = lastBookedJobLocation && lastBookedJobLocation !== formattedAddress
-        ? `\n📍 **Location Note:** This appointment accounts for ${await calculateTravelTime(lastBookedJobLocation, formattedAddress)} minutes travel time from our previous job plus 30 minutes job completion time.`
-        : '\n📍 **Location Note:** This is our first appointment of the day at your requested location.';
+        ? `\n??Location Note:** This appointment accounts for ${await calculateTravelTime(lastBookedJobLocation, formattedAddress)} minutes travel time from our previous job plus 30 minutes job completion time.`
+        : '\n??Location Note:** This is our first appointment of the day at your requested location.';
 
-      const confirmationMessage = `✅ **APPOINTMENT CONFIRMED!**\n\n` +
-                                 `📅 **Date & Time:** ${formattedTime} Brisbane time\n` +
-                                 `👤 **Customer:** ${stateMachine.clientData.name}\n` +
-                                 `📍 **Address:** ${formattedAddress}\n` +
-                                 `📧 **Email:** ${stateMachine.clientData.email}\n` +
-                                 `📞 **Phone:** ${stateMachine.clientData.phone || 'Not provided'}\n` +
-                                 `📝 **Special Instructions:** ${input || 'None'}${travelInfo}\n` +
+      const confirmationMessage = `?APPOINTMENT CONFIRMED!**\n\n` +
+                                 `??Date & Time:** ${formattedTime} Brisbane time\n` +
+                                 `??Customer:** ${stateMachine.clientData.name}\n` +
+                                 `??Address:** ${formattedAddress}\n` +
+                                 `??Email:** ${stateMachine.clientData.email}\n` +
+                                 `??Phone:** ${stateMachine.clientData.phone || 'Not provided'}\n` +
+                                 `??Special Instructions:** ${input || 'None'}${travelInfo}\n` +
                                  `**Your appointment reference:** ${generatePhoneBasedReference(stateMachine.callerPhoneNumber)}\n` +
                                  `**What to expect:**\n` +
-                                 `- ✅ Confirmation email sent to ${stateMachine.clientData.email}\n` +
-                                 `- 📞 Our plumber will call 30 minutes before arrival\n` +
-                                 `- 🔧 We'll bring all standard tools and parts\n` +
-                                 `- 💳 Payment can be made on completion\n` +
+                                 `- ? Confirmation email sent to ${stateMachine.clientData.email}\n` +
+                                 `- ?? Our plumber will call 30 minutes before arrival\n` +
+                                 `- ?? We'll bring all standard tools and parts\n` +
+                                 `- ?? Payment can be made on completion\n` +
                                  `Thank you for choosing Usher Fix Plumbing! Is there anything else I can help you with today?`;
 
       const response = await getResponse(confirmationMessage, stateMachine.conversationHistory);
@@ -3276,7 +3366,7 @@ async function collectSpecialInstructions(input) {
 async function handleGeneralQuery(input) {
   try {
     console.log('  EMERGENCY BOOKING INITIATED');
-    console.log('📋 Customer Details:', {
+    console.log('?? Customer Details:', {
       name: stateMachine.clientData.name,
       email: stateMachine.clientData.email,
       address: stateMachine.clientData.address,
@@ -3287,13 +3377,13 @@ async function handleGeneralQuery(input) {
     // Get access token for Google Calendar
     const accessToken = await getAccessToken();
     if (!accessToken) {
-      console.error('❌ EMERGENCY: Failed to get Google Calendar access token');
-      const response = `🚨 **EMERGENCY RESPONSE ACTIVATED**
+      console.error('? EMERGENCY: Failed to get Google Calendar access token');
+      const response = `??EMERGENCY RESPONSE ACTIVATED**
 
 I've escalated your urgent request to our emergency dispatch team. 
 A plumber will be contacted immediately and will call you within 15 minutes to confirm arrival time.
 
-📧 You'll also receive an email confirmation at ${stateMachine.clientData.email}`;
+?? You'll also receive an email confirmation at ${stateMachine.clientData.email}`;
       
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
       return response;
@@ -3303,19 +3393,19 @@ A plumber will be contacted immediately and will call you within 15 minutes to c
     const now = new Date();
     const nextSlot = await getNextAvailableSlot(accessToken, now);
     if (!nextSlot) {
-      console.error('❌ EMERGENCY: No available appointment slots found');
-      const response = `🚨 **EMERGENCY RESPONSE ACTIVATED**
+      console.error('? EMERGENCY: No available appointment slots found');
+      const response = `??EMERGENCY RESPONSE ACTIVATED**
 
 I've escalated your urgent request to our emergency dispatch team. 
 A plumber will be contacted immediately and will call you within 15 minutes to confirm arrival time.
 
-📧 You'll also receive an email confirmation at ${stateMachine.clientData.email}`;
+?? You'll also receive an email confirmation at ${stateMachine.clientData.email}`;
       
       stateMachine.conversationHistory.push({ role: 'assistant', content: response });
       return response;
     }
     
-    console.log(`⚡ EMERGENCY SLOT FOUND: ${nextSlot}`);
+    console.log(`? EMERGENCY SLOT FOUND: ${nextSlot}`);
     
     // Format appointment time
     const appointmentTime = nextSlot.toLocaleString('en-AU', {
@@ -3330,11 +3420,11 @@ A plumber will be contacted immediately and will call you within 15 minutes to c
     
     // Generate reference number
     const referenceNumber = `PLB-URG-${Date.now().toString().slice(-6)}`;
-    console.log(`🆔 EMERGENCY REFERENCE: ${referenceNumber}`);
+    console.log(`?? EMERGENCY REFERENCE: ${referenceNumber}`);
     
     // Create emergency appointment
     const appointmentEventDetails = {
-      summary: `🚨 EMERGENCY: ${stateMachine.clientData.issueDescription || 'Plumbing Issue'} - ${stateMachine.clientData.name}`,
+      summary: `?? EMERGENCY: ${stateMachine.clientData.issueDescription || 'Plumbing Issue'} - ${stateMachine.clientData.name}`,
       description: `EMERGENCY PLUMBING APPOINTMENT\n\n` +
                   `Customer: ${stateMachine.clientData.name}\n` +
                   `Phone: ${stateMachine.clientData.phone || 'Not provided'}\n` +
@@ -3343,9 +3433,9 @@ A plumber will be contacted immediately and will call you within 15 minutes to c
                   `Issue: ${stateMachine.clientData.issueDescription || 'Emergency plumbing issue'}\n` +
                   `Priority: HIGH - EMERGENCY\n` +
                   `Reference: ${referenceNumber}\n\n` +
-                  `⚠️ URGENT: Customer needs immediate assistance\n` +
-                  `📞 Call customer 30 minutes before arrival\n` +
-                  `📧 Email confirmation sent to ${stateMachine.clientData.email}`,
+                  `?? URGENT: Customer needs immediate assistance\n` +
+                  `?? Call customer 30 minutes before arrival\n` +
+                  `?? Email confirmation sent to ${stateMachine.clientData.email}`,
       start: {
         dateTime: nextSlot.toISOString(),
         timeZone: BRISBANE_TZ,
@@ -3368,20 +3458,20 @@ A plumber will be contacted immediately and will call you within 15 minutes to c
       colorId: '11', // Red color for emergency appointments
     };
     
-    console.log('📅 CREATING EMERGENCY GOOGLE CALENDAR APPOINTMENT...');
-    console.log(`📋 Customer: ${stateMachine.clientData.name}`);
-    console.log(`📧 Email: ${stateMachine.clientData.email}`);
-    console.log(`📍 Address: ${stateMachine.clientData.address}`);
-    console.log(`📞 Phone: ${stateMachine.clientData.phone || 'Not provided'}`);
-    console.log(`⏰ Emergency Time: ${appointmentTime}`);
+    console.log('?? CREATING EMERGENCY GOOGLE CALENDAR APPOINTMENT...');
+    console.log(`?? Customer: ${stateMachine.clientData.name}`);
+    console.log(`?? Email: ${stateMachine.clientData.email}`);
+    console.log(`?? Address: ${stateMachine.clientData.address}`);
+    console.log(`?? Phone: ${stateMachine.clientData.phone || 'Not provided'}`);
+    console.log(`? Emergency Time: ${appointmentTime}`);
     
     // Create appointment in Google Calendar
     const appointment = await createAppointment(accessToken, appointmentEventDetails);
     
     if (appointment && appointment.id) {
-      console.log('✅ EMERGENCY APPOINTMENT SUCCESSFULLY BOOKED IN GOOGLE CALENDAR!');
-      console.log(`🆔 Emergency Appointment ID: ${appointment.id}`);
-      console.log(`📧 Email confirmation will be sent to: ${stateMachine.clientData.email}`);
+      console.log('? EMERGENCY APPOINTMENT SUCCESSFULLY BOOKED IN GOOGLE CALENDAR!');
+      console.log(`?? Emergency Appointment ID: ${appointment.id}`);
+      console.log(`?? Email confirmation will be sent to: ${stateMachine.clientData.email}`);
       
       stateMachine.appointmentBooked = true;
       stateMachine.appointmentId = appointment.id;
@@ -3389,27 +3479,27 @@ A plumber will be contacted immediately and will call you within 15 minutes to c
       stateMachine.currentState = 'appointment_confirmed';
       
       // Email confirmation will be sent automatically by Google Calendar
-      console.log('📧 EMAIL CONFIRMATION PROCESS:');
-      console.log('   ✅ Google Calendar will automatically send emergency appointment invite');
-      console.log('   ✅ Customer will receive urgent calendar notification');
-      console.log('   ✅ Emergency appointment marked with high priority');
+      console.log('?? EMAIL CONFIRMATION PROCESS:');
+      console.log('   ? Google Calendar will automatically send emergency appointment invite');
+      console.log('   ? Customer will receive urgent calendar notification');
+      console.log('   ? Emergency appointment marked with high priority');
       
-      const response = `🚨 **EMERGENCY APPOINTMENT BOOKED!**
+      const response = `??EMERGENCY APPOINTMENT BOOKED!**
 
-⚡ **URGENT PRIORITY CONFIRMED**
-📅 **Date & Time:** ${appointmentTime}
-📍 **Location:** ${stateMachine.clientData.address}
-🆔 **Emergency Reference:** ${referenceNumber}
-📧 **Confirmation:** Being sent to ${stateMachine.clientData.email}
+?URGENT PRIORITY CONFIRMED**
+??Date & Time:** ${appointmentTime}
+??Location:** ${stateMachine.clientData.address}
+??Emergency Reference:** ${referenceNumber}
+??Confirmation:** Being sent to ${stateMachine.clientData.email}
 
-🚛 Our emergency plumber is being dispatched and will arrive within the scheduled time. 
+?? Our emergency plumber is being dispatched and will arrive within the scheduled time. 
 
-📱 **You will receive:**
-• Immediate calendar invitation with emergency details
-• SMS notification 30 minutes before arrival
-• Direct contact number for the assigned plumber
+??You will receive:**
+� Immediate calendar invitation with emergency details
+� SMS notification 30 minutes before arrival
+� Direct contact number for the assigned plumber
 
-⚠️  **EMERGENCY PROTOCOL ACTIVE** - Our team has been notified of your urgent situation.
+?? EMERGENCY PROTOCOL ACTIVE** - Our team has been notified of your urgent situation.
 
 Is there anything else urgent I can help you with?`;
       
@@ -3422,7 +3512,7 @@ Is there anything else urgent I can help you with?`;
     }
     
   } catch (error) {
-    console.error('❌ EMERGENCY BOOKING FAILED:', error.message);
+    console.error('? EMERGENCY BOOKING FAILED:', error.message);
     console.error('  Emergency Error Details:', {
       customerName: stateMachine.clientData.name,
       customerEmail: stateMachine.clientData.email,
@@ -3430,13 +3520,13 @@ Is there anything else urgent I can help you with?`;
       error: error.stack
     });
     
-    const response = `🚨 **EMERGENCY ESCALATION**
+    const response = `??EMERGENCY ESCALATION**
 
 I've immediately escalated your emergency to our dispatch team. 
 A supervisor will call you within 5 minutes to arrange immediate assistance.
 
-📞 Please keep your phone available.
-📧 You'll receive follow-up details at ${stateMachine.clientData.email}`;
+?? Please keep your phone available.
+?? You'll receive follow-up details at ${stateMachine.clientData.email}`;
     
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     return response;
@@ -3484,7 +3574,7 @@ async function handleGeneralQuery(input) {
     
     if (normalizedInput.includes('yes') || normalizedInput.includes('correct') || normalizedInput.includes('all good')) {
       // All details confirmed, proceed to booking
-      console.log('✅ CUSTOMER CONFIRMED ALL DETAILS - PROCEEDING TO BOOK APPOINTMENT');
+      console.log('? CUSTOMER CONFIRMED ALL DETAILS - PROCEEDING TO BOOK APPOINTMENT');
       stateMachine.confirmingAllDetails = false;
       return await autoBookAppointment();
     }
@@ -3538,7 +3628,7 @@ async function handleGeneralQuery(input) {
   
   // Handle emergency situations first (highest priority)
   if (emergencyKeywords.test(input)) {
-    console.log('🚨 EMERGENCY detected - highest priority');
+    console.log('?? EMERGENCY detected - highest priority');
     stateMachine.urgent = true;
     stateMachine.needsEmpathy = true;
     stateMachine.safetyConcern = true;
@@ -3563,7 +3653,7 @@ async function handleGeneralQuery(input) {
       stateMachine.currentState === 'general' && 
       !stateMachine.troubleshootingProvided &&
       !stateMachine.confirmingAllDetails) {
-    console.log('🔧 ISSUE DETECTED in general conversation - offering booking');
+    console.log('?? ISSUE DETECTED in general conversation - offering booking');
     stateMachine.clientData.issueDescription = input;
     stateMachine.currentState = 'ask_booking';
     return `I understand you're having issues with ${input.toLowerCase()}. That definitely sounds like something our experienced plumbers can help you with. Would you like me to schedule an appointment for a technician to come out and take care of this for you?`;
@@ -3575,7 +3665,7 @@ async function handleGeneralQuery(input) {
     const troubleshootingFailedKeywords = /\b(didn't work|still not working|still broken|still have the problem|no luck|not fixed|same issue|still leaking|still blocked|still won't flush|doesn't help|tried but|tried that|already tried|still need help|need a plumber|book appointment|schedule|visit)/i;
     
     if (troubleshootingSuccessKeywords.test(input)) {
-      console.log('✅ Troubleshooting was successful');
+      console.log('? Troubleshooting was successful');
       stateMachine.troubleshootingProvided = false; // Reset for future issues
       const response = await getResponse(
         `That's wonderful! I'm so glad those troubleshooting steps worked for you. Is there anything else I can help you with today? If you have any other plumbing issues in the future, feel free to call us anytime.`,
@@ -3586,7 +3676,7 @@ async function handleGeneralQuery(input) {
     }
     
     if (troubleshootingFailedKeywords.test(input)) {
-      console.log('❌ Troubleshooting didn\'t work - offering appointment');
+      console.log('? Troubleshooting didn\'t work - offering appointment');
       stateMachine.troubleshootingProvided = false; // Reset so booking flow can proceed
       const response = await getResponse(
         `No worries at all - sometimes these issues need professional attention. Our experienced plumbers have the right tools and expertise to fix this properly. Would you like me to book an appointment for a technician to come out and take care of this for you?`,
@@ -3599,7 +3689,7 @@ async function handleGeneralQuery(input) {
   
   // Handle cancellation requests
   if (cancelKeywords.test(input)) {
-    console.log('❌ Cancellation request detected');
+    console.log('? Cancellation request detected');
     const response = await getResponse(
       'I understand you\'d like to cancel. Can you please provide your appointment reference number or the details of your booking so I can help you with the cancellation?',
       stateMachine.conversationHistory
@@ -3610,7 +3700,7 @@ async function handleGeneralQuery(input) {
   
   // Handle name change requests
   if (nameChangeKeywords.test(input)) {
-    console.log('👤 Name change request detected');
+    console.log('?? Name change request detected');
     stateMachine.collectingDetail = 'name';
     stateMachine.spellingConfirmation = false;
     stateMachine.tempCollectedValue = null;
@@ -3624,7 +3714,7 @@ async function handleGeneralQuery(input) {
   
   // Handle address change requests
   if (addressChangeKeywords.test(input)) {
-    console.log('🏠 Address change request detected');
+    console.log('?? Address change request detected');
     stateMachine.collectingDetail = 'address';
     stateMachine.spellingConfirmation = false;
     stateMachine.tempCollectedValue = null;
@@ -3638,7 +3728,7 @@ async function handleGeneralQuery(input) {
   
   // Handle time/appointment change requests
   if (timeChangeKeywords.test(input)) {
-    console.log('⏰ Time change request detected');
+    console.log('? Time change request detected');
     const response = await getResponse(
       'I can help you reschedule your appointment. What time would work better for you? I can check availability for today, tomorrow, or later this week.',
       stateMachine.conversationHistory
@@ -3649,7 +3739,7 @@ async function handleGeneralQuery(input) {
   
   // Handle status check requests
   if (statusCheckKeywords.test(input)) {
-    console.log('📋 Status check request detected');
+    console.log('?? Status check request detected');
     const extractedData = extractCustomerDataFromHistory();
     if (extractedData.name || extractedData.email || extractedData.address) {
       const response = await getResponse(
@@ -3670,15 +3760,15 @@ async function handleGeneralQuery(input) {
   
   // Handle help/information requests
   if (helpKeywords.test(input)) {
-    console.log('❓ Help request detected');
+    console.log('? Help request detected');
     const response = await getResponse(
       'I\'m here to help! I can assist you with:\n' +
-      '• Booking plumbing appointments\n' +
-      '• Emergency plumbing services\n' +
-      '• Updating your contact details\n' +
-      '• Checking appointment status\n' +
-      '• Rescheduling appointments\n' +
-      '• Service pricing and quotes\n' +
+      '� Booking plumbing appointments\n' +
+      '� Emergency plumbing services\n' +
+      '� Updating your contact details\n' +
+      '� Checking appointment status\n' +
+      '� Rescheduling appointments\n' +
+      '� Service pricing and quotes\n' +
       'What would you like help with?',
       stateMachine.conversationHistory
     );
@@ -3688,7 +3778,7 @@ async function handleGeneralQuery(input) {
   
   // Handle pricing/quote requests
   if (priceQuoteKeywords.test(input)) {
-    console.log('💰 Pricing/quote request detected');
+    console.log('?? Pricing/quote request detected');
     const response = await getResponse(
       'I\'d be happy to help with pricing information. Our call-out fee is $99, which includes the first 30 minutes of labour. Additional work is charged at competitive rates. For an accurate quote, I can arrange for a technician to assess your specific issue. Would you like me to book an appointment for a free quote?',
       stateMachine.conversationHistory
@@ -3699,15 +3789,15 @@ async function handleGeneralQuery(input) {
   
   // Handle service type questions
   if (serviceTypeKeywords.test(input) && !bookingKeywords.test(input)) {
-    console.log('🔧 Service type inquiry detected');
+    console.log('?? Service type inquiry detected');
     const response = await getResponse(
       'We handle all types of plumbing issues including:\n' +
-      '• Toilet repairs and installations\n' +
-      '• Sink and tap problems\n' +
-      '• Drain cleaning and unblocking\n' +
-      '• Water heater services\n' +
-      '• Pipe repairs and leaks\n' +
-      '• Bathroom and kitchen plumbing\n' +
+      '� Toilet repairs and installations\n' +
+      '� Sink and tap problems\n' +
+      '� Drain cleaning and unblocking\n' +
+      '� Water heater services\n' +
+      '� Pipe repairs and leaks\n' +
+      '� Bathroom and kitchen plumbing\n' +
       'What specific plumbing issue do you need help with? I can book an appointment to get it fixed.',
       stateMachine.conversationHistory
     );
@@ -3717,7 +3807,7 @@ async function handleGeneralQuery(input) {
   
   // Handle greetings and general plumbing requests
   if (greetingKeywords.test(input) && !bookingKeywords.test(input)) {
-    console.log('👋 Greeting detected');
+    console.log('?? Greeting detected');
     const response = 'Hello! I\'m Robyn from Assure Fix Plumbing. How can I help you today? Are you experiencing a plumbing issue that needs fixing?';
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     return response;
@@ -3727,14 +3817,14 @@ async function handleGeneralQuery(input) {
   const generalPlumbingKeywords = /\b(need|want|require|looking for|could use|call for).*(plumber|plumbing|fix|repair|help|service|technician)|plumber|plumbing.*help|plumbing.*service|plumbing.*issue|plumbing.*problem|need.*fixed|need.*repaired|something.*wrong|having.*problem|experiencing.*issue/i;
   
   if (generalPlumbingKeywords.test(input) && !bookingKeywords.test(input) && !serviceTypeKeywords.test(input)) {
-    console.log('🔧 General plumbing request detected - starting issue diagnosis');
+    console.log('?? General plumbing request detected - starting issue diagnosis');
     const response = await getResponse(
       'I\'d be happy to help you with your plumbing needs! What specific plumbing issue are you experiencing? For example:\n' +
-      '• Toilet problems (won\'t flush, overflowing, leaking)\n' +
-      '• Sink or tap issues (no water, leaks, drips)\n' +
-      '• Blocked drains\n' +
-      '• Water heater problems\n' +
-      '• Pipe leaks or bursts\n' +
+      '� Toilet problems (won\'t flush, overflowing, leaking)\n' +
+      '� Sink or tap issues (no water, leaks, drips)\n' +
+      '� Blocked drains\n' +
+      '� Water heater problems\n' +
+      '� Pipe leaks or bursts\n' +
       'Tell me what\'s happening so I can understand how to help you.',
       stateMachine.conversationHistory
     );
@@ -3744,7 +3834,7 @@ async function handleGeneralQuery(input) {
   
   // Handle email change requests
   if (emailChangeKeywords.test(input)) {
-    console.log('📧 Email change request detected');
+    console.log('?? Email change request detected');
     stateMachine.collectingDetail = 'email';
     stateMachine.spellingConfirmation = false;
     stateMachine.tempCollectedValue = null;
@@ -3758,15 +3848,15 @@ async function handleGeneralQuery(input) {
   
   // Handle confirmation email requests
   if (confirmationKeywords.test(input)) {
-    console.log('📬 Confirmation email request detected');
+    console.log('?? Confirmation email request detected');
     const extractedData = extractCustomerDataFromHistory();
     
     if (extractedData.email && extractedData.name && extractedData.address) {
-      console.log('✅ Complete data available, proceeding with booking and confirmation');
+      console.log('? Complete data available, proceeding with booking and confirmation');
       stateMachine.currentState = 'confirm_booking';
       return await confirmAppointmentBooking('confirm');
     } else {
-      console.log('❌ Missing data for confirmation, collecting details first');
+      console.log('? Missing data for confirmation, collecting details first');
       const missingDetails = [];
       if (!extractedData.name) missingDetails.push('name');
       if (!extractedData.email) missingDetails.push('email');
@@ -3778,10 +3868,25 @@ async function handleGeneralQuery(input) {
   }
   
   if (bookingKeywords.test(input)) {
-    console.log('🎯 Booking request detected, transitioning to booking flow');
-    console.log('📅 Regular booking request detected');
-    stateMachine.currentState = 'book_appointment';
-    return await handleAppointmentBooking(input);
+    console.log('?? Booking request detected, transitioning to structured collection with location optimization');
+    
+    // Start structured collection process that includes location optimization
+    if (!stateMachine.clientData.name || !stateMachine.clientData.phone || !stateMachine.clientData.email || !stateMachine.clientData.address) {
+      console.log('?? Missing details detected, starting structured collection');
+      stateMachine.currentState = 'collect_details';
+      stateMachine.questionIndex = 0;
+      
+      const response = await getResponse(
+        'I\'d be happy to schedule an appointment for you. Let me get your details first. What\'s your full name?',
+        stateMachine.conversationHistory
+      );
+      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+      return response;
+    } else {
+      // All details available, proceed with location-optimized booking
+      console.log('?? All details available, proceeding with optimized booking');
+      return await autoBookAppointment();
+    }
   }
   
   const extractedData = extractCustomerDataFromHistory();
@@ -3849,12 +3954,12 @@ async function handleGeneralQuery(input) {
 
   // Check if customer wants to start the booking process without providing details first
   if (hasBookingIntent && !hasCompleteData && !stateMachine.allDetailsCollected) {
-    console.log('📝 Booking intent detected - starting step-by-step detail collection');
+    console.log('?? Booking intent detected - starting step-by-step detail collection');
     return await startStepByStepCollection();
   }
 
   if (hasCompleteData && (hasBookingIntent || seemsReady)) {
-    console.log('📅 BOOKING TRIGGER DETECTED with complete data:', extractedData);
+    console.log('?? BOOKING TRIGGER DETECTED with complete data:', extractedData);
     // Update state machine with complete data
     stateMachine.clientData.name = extractedData.name;
     stateMachine.clientData.email = extractedData.email;
@@ -3868,7 +3973,7 @@ async function handleGeneralQuery(input) {
   const issueClassification = classifyPlumbingIssue(input);
   
   if (issueClassification && issueClassification !== 'unknown') {
-    console.log(`🔧 ${issueClassification.type} issue detected`);
+    console.log(`?? ${issueClassification.type} issue detected`);
     stateMachine.clientData.issueDescription = issueClassification.description;
     const response = await getResponse(
       `I understand you have ${issueClassification.description}. ${issueClassification.followUp} To book an appointment, I'll need to collect your contact details. What's your full name?`,
@@ -3965,7 +4070,7 @@ async function handleReschedulingRequest(input) {
   // If we reach here and don't have complete customer details, BUT they haven't specified their plumbing issue yet, 
   // ask about the issue first instead of jumping to booking details
   if (!stateMachine.allDetailsCollected && !stateMachine.clientData.name && !stateMachine.clientData.email && !stateMachine.clientData.address) {
-    console.log('📝 No clear intent - asking about plumbing issue first');
+    console.log('?? No clear intent - asking about plumbing issue first');
     const response = await getResponse(
       `I'd be happy to help you with your plumbing needs! What specific plumbing problem are you experiencing? Once I understand the issue, I can assist you with booking a service call.`,
       stateMachine.conversationHistory
@@ -3979,13 +4084,13 @@ async function handleReschedulingRequest(input) {
   
   // Check if customer is describing an issue but hasn't mentioned booking yet
   if (issueDescriptionKeywords.test(input) && !bookingKeywords.test(input) && !stateMachine.allDetailsCollected && !stateMachine.troubleshootingProvided) {
-    console.log('🔧 Issue description detected - providing troubleshooting steps first');
+    console.log('?? Issue description detected - providing troubleshooting steps first');
     return await provideTroubleshootingSteps(input);
   }
 
   // If troubleshooting was already provided and customer still needs help, offer booking
   if (stateMachine.troubleshootingProvided && !stateMachine.allDetailsCollected) {
-    console.log('🔧 Troubleshooting completed - offering to book appointment');
+    console.log('?? Troubleshooting completed - offering to book appointment');
     const response = await getResponse(
       `If those troubleshooting steps didn't resolve the issue, our experienced plumbers can definitely help fix that problem. Would you like me to book an appointment for a technician to come out and take care of this for you?`,
       stateMachine.conversationHistory
@@ -4010,7 +4115,7 @@ async function handleReschedulingRequest(input) {
  * Provide troubleshooting steps based on the customer's issue description
  */
 async function provideTroubleshootingSteps(input) {
-  console.log('🛠️ Providing troubleshooting steps for:', input);
+  console.log('??? Providing troubleshooting steps for:', input);
   stateMachine.troubleshootingProvided = true;
   
   const lowerInput = input.toLowerCase();
@@ -4019,88 +4124,88 @@ async function provideTroubleshootingSteps(input) {
   // Toilet issues
   if (lowerInput.includes('toilet') && (lowerInput.includes('flush') || lowerInput.includes('won\'t flush') || lowerInput.includes('not flushing'))) {
     troubleshootingResponse = `I understand your toilet won't flush properly. Let's try a few quick troubleshooting steps:\n\n` +
-      `🚽 **Quick Fixes to Try:**\n` +
-      `1. **Check the flapper** - Lift the toilet tank lid and see if the rubber flapper at the bottom is sealing properly\n` +
-      `2. **Adjust the chain** - Make sure the chain connecting the flush handle to the flapper isn't too loose or tight\n` +
-      `3. **Check water level** - Water should be about 1 inch below the rim of the tank\n` +
-      `4. **Try a firm flush** - Press and hold the handle down for 2-3 seconds\n\n` +
+      `??Quick Fixes to Try:**\n` +
+      `1.Check the flapper** - Lift the toilet tank lid and see if the rubber flapper at the bottom is sealing properly\n` +
+      `2.Adjust the chain** - Make sure the chain connecting the flush handle to the flapper isn't too loose or tight\n` +
+      `3.Check water level** - Water should be about 1 inch below the rim of the tank\n` +
+      `4.Try a firm flush** - Press and hold the handle down for 2-3 seconds\n\n` +
       `Try these steps and let me know if the toilet is working properly now, or if you still need a plumber to come out.`;
   }
   // Blocked toilet
   else if (lowerInput.includes('toilet') && (lowerInput.includes('blocked') || lowerInput.includes('clogged') || lowerInput.includes('backup'))) {
     troubleshootingResponse = `I understand your toilet is blocked. Let's try some safe troubleshooting steps:\n\n` +
-      `🚽 **Safe Unblocking Steps:**\n` +
-      `1. **Use a plunger** - Place firmly over the drain hole and pump vigorously 10-15 times\n` +
-      `2. **Wait and try again** - Let it sit for 15 minutes, then try flushing\n` +
-      `3. **Check for obvious obstructions** - Look for anything visible that might be causing the blockage\n` +
-      `4. **Don't use chemical drain cleaners** - These can damage your pipes\n\n` +
-      `⚠️ **Stop immediately if water starts overflowing!**\n\n` +
+      `??Safe Unblocking Steps:**\n` +
+      `1.Use a plunger** - Place firmly over the drain hole and pump vigorously 10-15 times\n` +
+      `2.Wait and try again** - Let it sit for 15 minutes, then try flushing\n` +
+      `3.Check for obvious obstructions** - Look for anything visible that might be causing the blockage\n` +
+      `4.Don't use chemical drain cleaners** - These can damage your pipes\n\n` +
+      `??Stop immediately if water starts overflowing!**\n\n` +
       `Try these steps and let me know if the blockage has cleared, or if you need a professional plumber.`;
   }
   // Leaking toilet
   else if (lowerInput.includes('toilet') && (lowerInput.includes('leak') || lowerInput.includes('leaking') || lowerInput.includes('water on floor'))) {
     troubleshootingResponse = `I understand your toilet is leaking. Let's identify where the leak is coming from:\n\n` +
-      `🚽 **Check These Areas:**\n` +
-      `1. **Around the base** - Tighten the bolts at the base of the toilet (don't overtighten)\n` +
-      `2. **Tank to bowl connection** - Check if water is dripping between the tank and bowl\n` +
-      `3. **Water supply line** - Look behind the toilet for drips from the water line\n` +
-      `4. **Inside the tank** - Lift the lid and see if water is constantly running\n\n` +
-      `⚠️ **If there's a lot of water or it keeps getting worse, turn off the water valve behind the toilet!**\n\n` +
+      `??Check These Areas:**\n` +
+      `1.Around the base** - Tighten the bolts at the base of the toilet (don't overtighten)\n` +
+      `2.Tank to bowl connection** - Check if water is dripping between the tank and bowl\n` +
+      `3.Water supply line** - Look behind the toilet for drips from the water line\n` +
+      `4.Inside the tank** - Lift the lid and see if water is constantly running\n\n` +
+      `??If there's a lot of water or it keeps getting worse, turn off the water valve behind the toilet!**\n\n` +
       `Let me know what you found, or if you'd like a plumber to properly diagnose and fix the leak.`;
   }
   // Sink/tap issues
   else if ((lowerInput.includes('sink') || lowerInput.includes('tap') || lowerInput.includes('faucet')) && (lowerInput.includes('drip') || lowerInput.includes('leak'))) {
     troubleshootingResponse = `I understand your sink/tap is dripping. Here are some quick steps to try:\n\n` +
-      `🚰 **Quick Tap Fixes:**\n` +
-      `1. **Turn off tightly** - Make sure the tap is completely turned off (but don't force it)\n` +
-      `2. **Check the aerator** - Unscrew the tip of the tap and clean any debris\n` +
-      `3. **Look for obvious loose parts** - Gently tighten any visible loose connections\n` +
-      `4. **Note the drip location** - Is it from the spout, handle, or base?\n\n` +
-      `💡 **Temporary fix:** Place a bowl underneath to catch drips until it's properly fixed.\n\n` +
+      `??Quick Tap Fixes:**\n` +
+      `1.Turn off tightly** - Make sure the tap is completely turned off (but don't force it)\n` +
+      `2.Check the aerator** - Unscrew the tip of the tap and clean any debris\n` +
+      `3.Look for obvious loose parts** - Gently tighten any visible loose connections\n` +
+      `4.Note the drip location** - Is it from the spout, handle, or base?\n\n` +
+      `??Temporary fix:** Place a bowl underneath to catch drips until it's properly fixed.\n\n` +
       `Try these steps and let me know if the dripping has stopped, or if you need a plumber to replace worn parts.`;
   }
   // No water issues
   else if (lowerInput.includes('no water') || (lowerInput.includes('water') && lowerInput.includes('not working'))) {
     troubleshootingResponse = `I understand you have no water. Let's check a few things:\n\n` +
-      `💧 **Water Supply Checks:**\n` +
-      `1. **Check other taps** - Do any other taps in the house have water?\n` +
-      `2. **Look for shut-off notices** - Check if there's a water outage in your area\n` +
-      `3. **Check the water meter** - Make sure the main water valve is turned on\n` +
-      `4. **Look for obvious leaks** - Check around your property for any burst pipes\n\n` +
-      `🔧 **If it's just one tap:** Try cleaning the aerator (tip of the tap)\n\n` +
+      `??Water Supply Checks:**\n` +
+      `1.Check other taps** - Do any other taps in the house have water?\n` +
+      `2.Look for shut-off notices** - Check if there's a water outage in your area\n` +
+      `3.Check the water meter** - Make sure the main water valve is turned on\n` +
+      `4.Look for obvious leaks** - Check around your property for any burst pipes\n\n` +
+      `??If it's just one tap:** Try cleaning the aerator (tip of the tap)\n\n` +
       `Let me know what you discovered, or if you'd like a plumber to investigate the water supply issue.`;
   }
   // Hot water issues
   else if (lowerInput.includes('hot water') || (lowerInput.includes('water heater') && (lowerInput.includes('not working') || lowerInput.includes('cold')))) {
     troubleshootingResponse = `I understand you're having hot water issues. Let's try some basic checks:\n\n` +
-      `🔥 **Hot Water System Checks:**\n` +
-      `1. **Check the pilot light** - If you have a gas system, make sure the pilot light is on\n` +
-      `2. **Check circuit breakers** - For electric systems, ensure no breakers have tripped\n` +
-      `3. **Test other hot taps** - Is it just one tap or the whole house?\n` +
-      `4. **Check water heater temperature** - It should be set to 60°C (140°F)\n\n` +
-      `⚠️ **Safety note:** Don't attempt any repairs on gas or electrical components yourself.\n\n` +
+      `??Hot Water System Checks:**\n` +
+      `1.Check the pilot light** - If you have a gas system, make sure the pilot light is on\n` +
+      `2.Check circuit breakers** - For electric systems, ensure no breakers have tripped\n` +
+      `3.Test other hot taps** - Is it just one tap or the whole house?\n` +
+      `4.Check water heater temperature** - It should be set to 60�C (140�F)\n\n` +
+      `??Safety note:** Don't attempt any repairs on gas or electrical components yourself.\n\n` +
       `Try these checks and let me know what you found, or if you need a qualified plumber to service your hot water system.`;
   }
   // Blocked drains
   else if (lowerInput.includes('drain') && (lowerInput.includes('blocked') || lowerInput.includes('clogged') || lowerInput.includes('slow'))) {
     troubleshootingResponse = `I understand your drain is blocked. Here are some safe methods to try:\n\n` +
-      `🚿 **Drain Unblocking Steps:**\n` +
-      `1. **Remove visible debris** - Clear any hair or soap buildup you can see\n` +
-      `2. **Try hot water** - Pour a kettle of hot (not boiling) water down the drain\n` +
-      `3. **Use a plunger** - Create a seal and plunge gently several times\n` +
-      `4. **Baking soda and vinegar** - Pour 1/2 cup baking soda, then 1/2 cup vinegar, wait 15 minutes, then hot water\n\n` +
-      `❌ **Avoid:** Chemical drain cleaners - these can damage pipes and are harmful\n\n` +
+      `??Drain Unblocking Steps:**\n` +
+      `1.Remove visible debris** - Clear any hair or soap buildup you can see\n` +
+      `2.Try hot water** - Pour a kettle of hot (not boiling) water down the drain\n` +
+      `3.Use a plunger** - Create a seal and plunge gently several times\n` +
+      `4.Baking soda and vinegar** - Pour 1/2 cup baking soda, then 1/2 cup vinegar, wait 15 minutes, then hot water\n\n` +
+      `?Avoid:** Chemical drain cleaners - these can damage pipes and are harmful\n\n` +
       `Try these steps and let me know if water is draining properly now, or if you need professional drain cleaning.`;
   }
   // Generic plumbing issue
   else {
     troubleshootingResponse = `I understand you're experiencing a plumbing issue. Here are some general safety steps:\n\n` +
-      `🔧 **General Plumbing Safety:**\n` +
-      `1. **Turn off water** - If there's a leak, turn off the nearest water valve\n` +
-      `2. **Check for obvious problems** - Look for loose connections, visible damage, or blockages\n` +
-      `3. **Don't force anything** - Avoid using excessive force on taps, handles, or pipes\n` +
-      `4. **Document the issue** - Note when it started and what triggers it\n\n` +
-      `💡 Can you describe your specific plumbing problem in more detail? This will help me provide more targeted troubleshooting steps.\n\n` +
+      `??General Plumbing Safety:**\n` +
+      `1.Turn off water** - If there's a leak, turn off the nearest water valve\n` +
+      `2.Check for obvious problems** - Look for loose connections, visible damage, or blockages\n` +
+      `3.Don't force anything** - Avoid using excessive force on taps, handles, or pipes\n` +
+      `4.Document the issue** - Note when it started and what triggers it\n\n` +
+      `?? Can you describe your specific plumbing problem in more detail? This will help me provide more targeted troubleshooting steps.\n\n` +
       `If you've tried basic steps or the issue seems complex, I can arrange for a qualified plumber to properly diagnose and fix the problem.`;
   }
   
@@ -4115,8 +4220,8 @@ async function checkAndAutoBook() {
   const hasCompleteData = stateMachine.clientData.name && stateMachine.clientData.email && stateMachine.clientData.address;
   
   if (hasCompleteData && !stateMachine.allDetailsCollected) {
-    console.log('🚀 AUTO-BOOKING: All details detected, proceeding to book appointment');
-    console.log('📋 Customer details:', {
+    console.log('?? AUTO-BOOKING: All details detected, proceeding to book appointment');
+    console.log('?? Customer details:', {
       name: stateMachine.clientData.name,
       email: stateMachine.clientData.email,
       address: stateMachine.clientData.address
@@ -4136,7 +4241,7 @@ async function handleTimeout() {
 
 // Request confirmation for a captured detail
 async function requestDetailConfirmation(detailType, value) {
-  console.log(`📋 Requesting confirmation for ${detailType}: ${value}`);
+  console.log(`?? Requesting confirmation for ${detailType}: ${value}`);
   
   stateMachine.awaitingConfirmation = true;
   stateMachine.pendingConfirmation = {
@@ -4176,16 +4281,16 @@ async function requestDetailConfirmation(detailType, value) {
   const response = await getResponse(confirmationPrompt, stateMachine.conversationHistory);
   stateMachine.conversationHistory.push({ role: 'assistant', content: response });
   
-  console.log(`📋 Confirmation requested for ${detailType}:`, response);
+  console.log(`?? Confirmation requested for ${detailType}:`, response);
   return response;
 }
 
 // Handle the customer's confirmation response
 async function handleDetailConfirmation(input) {
-  console.log('📋 Handling detail confirmation:', input);
+  console.log('?? Handling detail confirmation:', input);
   const confirmation = stateMachine.pendingConfirmation;
   if (!confirmation) {
-    console.error('📋 No pending confirmation found!');
+    console.error('?? No pending confirmation found!');
     return "I'm sorry, there seems to be an issue. Let me start over with collecting your details.";
   }
 
@@ -4202,7 +4307,7 @@ async function handleDetailConfirmation(input) {
                     lowerInput.includes('nope');
 
   if (isConfirmed) {
-    console.log(`📋 Detail confirmed: ${confirmation.type} = ${confirmation.value || 'multiple'}`);
+    console.log(`?? Detail confirmed: ${confirmation.type} = ${confirmation.value || 'multiple'}`);
     
     // Move the confirmed detail from temp to permanent storage
     if (confirmation.type === 'multiple') {
@@ -4225,7 +4330,7 @@ async function handleDetailConfirmation(input) {
     // Continue with detail collection (this will check for next missing detail)
     return await collectClientDetails('');
   } else if (isRejected || (confirmation.type === 'name' && isValidName(input)) || (confirmation.type === 'email' && input.includes('@'))) {
-    console.log(`📋 Detail ${isRejected ? 'rejected' : 'corrected'}: ${confirmation.type}`);
+    console.log(`?? Detail ${isRejected ? 'rejected' : 'corrected'}: ${confirmation.type}`);
     const correctedInput = validateAndCorrectInput(input);
     
     if (confirmation.type === 'name' && isValidName(correctedInput)) {
@@ -4258,27 +4363,27 @@ async function handleDetailConfirmation(input) {
       return response;
     }
   } else {
-    console.log(`📋 Unclear confirmation response: ${input}`);
+    console.log(`?? Unclear confirmation response: ${input}`);
     
-    // 🔥 INTELLIGENT DETECTION: Check if input contains info for missing details
+    // ?? INTELLIGENT DETECTION: Check if input contains info for missing details
     const missingDetail = ['name', 'email', 'address'].find(d => !stateMachine.clientData[d]);
     
     if (missingDetail) {
-      console.log(`📋 Detected possible ${missingDetail} in unclear confirmation: ${input}`);
+      console.log(`?? Detected possible ${missingDetail} in unclear confirmation: ${input}`);
       
       // Check if this input actually contains the missing detail
       if (missingDetail === 'email' && input.includes('@')) {
-        console.log('📋 Input contains email, processing as email instead of confirmation');
+        console.log('?? Input contains email, processing as email instead of confirmation');
         stateMachine.awaitingConfirmation = false;
         stateMachine.pendingConfirmation = null;
         return await collectClientDetails(input);
       } else if (missingDetail === 'address' && (input.toLowerCase().includes('street') || input.toLowerCase().includes('brisbane') || input.toLowerCase().includes('qld') || /\d+\s+[a-zA-Z\s]+/.test(input))) {
-        console.log('📋 Input contains address, processing as address instead of confirmation');
+        console.log('?? Input contains address, processing as address instead of confirmation');
         stateMachine.awaitingConfirmation = false;
         stateMachine.pendingConfirmation = null;
         return await collectClientDetails(input);
       } else if (missingDetail === 'name' && /^[a-zA-Z\s]+$/.test(input.trim()) && input.trim().split(' ').length >= 2) {
-        console.log('📋 Input contains name, processing as name instead of confirmation');
+        console.log('?? Input contains name, processing as name instead of confirmation');
         stateMachine.awaitingConfirmation = false;
         stateMachine.pendingConfirmation = null;
         return await collectClientDetails(input);
@@ -4351,7 +4456,7 @@ function formatPhoneForSpeech(phone) {
   return digits.split('').join(' ');
 }
 async function handleBookingComplete(input) {
-  console.log('📋 handleBookingComplete: Processing', input);
+  console.log('?? handleBookingComplete: Processing', input);
   
   const lowerInput = input.toLowerCase();
   
@@ -4362,7 +4467,7 @@ async function handleBookingComplete(input) {
       lowerInput.includes('that\'s it') || lowerInput.includes('all good') ||
       lowerInput.includes('i\'m good') || lowerInput.includes('nope')) {
     
-    console.log('📋 Customer wants to end call - verifying email confirmation');
+    console.log('?? Customer wants to end call - verifying email confirmation');
     
     // Verify email confirmation was sent before ending call
     const emailVerification = await verifyEmailConfirmation();
@@ -4376,11 +4481,11 @@ async function handleBookingComplete(input) {
       // Try to send email again
       try {
         await sendConfirmationEmail();
-        console.log('📋 Email resent successfully on call end');
+        console.log('?? Email resent successfully on call end');
       } catch (error) {
-        console.error('📋 Email failed to send on call end:', error);
+        console.error('?? Email failed to send on call end:', error);
         // Log for manual follow-up
-        console.log('📋 MANUAL FOLLOW-UP REQUIRED: Email failed for', stateMachine.clientData.email);
+        console.log('?? MANUAL FOLLOW-UP REQUIRED: Email failed for', stateMachine.clientData.email);
       }
     }
     
@@ -4388,7 +4493,7 @@ async function handleBookingComplete(input) {
 
 If you need to make any changes or have questions before your appointment, please call us at (07) 3608 1688.
 
-Thank you for choosing Usher Fix Plumbing! 🔧`;
+Thank you for choosing Usher Fix Plumbing! ??`;
     
     const closingResponse = await getResponse(closingMessage, stateMachine.conversationHistory);
     
@@ -4426,7 +4531,7 @@ Thank you for choosing Usher Fix Plumbing! 🔧`;
 
 // Confirm and create the actual appointment
 async function confirmAppointmentBooking(input, emergencyMode = false) {
-  console.log('📅 confirmAppointmentBooking: Processing', input, emergencyMode ? '(EMERGENCY MODE)' : '');
+  console.log('?? confirmAppointmentBooking: Processing', input, emergencyMode ? '(EMERGENCY MODE)' : '');
   
   const lowerInput = input.toLowerCase();
   
@@ -4489,27 +4594,27 @@ Special Instructions: ${stateMachine.clientData.specialInstructions || 'None'}`,
           // Try to send confirmation email immediately
           try {
             await sendConfirmationEmail();
-            console.log('✅ Confirmation email sent successfully');
+            console.log('? Confirmation email sent successfully');
           } catch (emailError) {
-            console.error('📧 Email sending failed during appointment creation:', emailError);
+            console.error('?? Email sending failed during appointment creation:', emailError);
             // Don't fail the appointment, but log for follow-up
           }
           
           // Create comprehensive booking confirmation
-          const confirmationMessage = `✅ **APPOINTMENT CONFIRMED!**
+          const confirmationMessage = `?APPOINTMENT CONFIRMED!**
 
-📅 **Date & Time:** ${formattedTime} Brisbane time
-👤 **Customer:** ${stateMachine.clientData.name}
-📍 **Address:** ${stateMachine.clientData.address}
-📧 **Email:** ${stateMachine.clientData.email}
-🔧 **Issue:** Toilet that won't flush
-📝 **Reference:** ${generatePhoneBasedReference(stateMachine.callerPhoneNumber)}
+??Date & Time:** ${formattedTime} Brisbane time
+??Customer:** ${stateMachine.clientData.name}
+??Address:** ${stateMachine.clientData.address}
+??Email:** ${stateMachine.clientData.email}
+??Issue:** Toilet that won't flush
+??Reference:** ${generatePhoneBasedReference(stateMachine.callerPhoneNumber)}
 
 **What to expect:**
-- ✅ Confirmation email sent to ${stateMachine.clientData.email}
-- 📞 Our plumber will call 30 minutes before arrival
-- 🔧 We'll bring all standard tools and parts
-- 💳 Payment can be made on completion
+- ? Confirmation email sent to ${stateMachine.clientData.email}
+- ?? Our plumber will call 30 minutes before arrival
+- ?? We'll bring all standard tools and parts
+- ?? Payment can be made on completion
 
 Thank you for choosing Usher Fix Plumbing! Is there anything else I can help you with today?`;
           
@@ -4517,13 +4622,13 @@ Thank you for choosing Usher Fix Plumbing! Is there anything else I can help you
           stateMachine.conversationHistory.push({ role: 'assistant', content: response });
           stateMachine.currentState = 'booking_complete';
           
-          console.log('✅ Appointment created successfully:', appointment.id);
+          console.log('? Appointment created successfully:', appointment.id);
           return response;      } else {
         throw new Error('Appointment creation returned null');
       }
       
     } catch (error) {
-      console.error('❌ Appointment booking failed:', error);
+      console.error('? Appointment booking failed:', error);
       
       const errorResponse = await getResponse(
         `I apologize, but there was an issue creating your appointment. 
@@ -4731,7 +4836,7 @@ function extractCustomerDataFromHistory() {
               
               if (isValidAddress) {
                 latestAddress = candidateAddress;
-                console.log('🏠 Found address:', latestAddress);
+                console.log('?? Found address:', latestAddress);
                 break;
               }
             }
@@ -4828,7 +4933,7 @@ function extractNameFromInput(input) {
     'layla': 'Layla',
     'yasmin': 'Yasmin',
     'maria': 'Maria',
-    'jose': 'José',
+    'jose': 'Jos�',
     'pedro': 'Pedro',
     'carlos': 'Carlos',
     'fernando': 'Fernando',
@@ -4952,7 +5057,7 @@ function isValidName(candidateName) {
   if (!/[a-zA-Z]/.test(name)) return false;
   
   // Allow letters, spaces, hyphens, apostrophes, and dots (for titles/initials)
-  if (!/^[a-zA-ZÀ-ÿĀ-žА-я\s\-'\.]+$/.test(name)) return false;
+  if (!/^[a-zA-Z�-�A-�?-?\s\-'\.]+$/.test(name)) return false;
   
   // Should have reasonable word count (1-5 words for names with titles)
   const wordCount = name.trim().split(/\s+/).length;
@@ -4960,7 +5065,7 @@ function isValidName(candidateName) {
   
   // Check if it looks like a real name (has at least one word with 1+ letters)
   const words = name.trim().split(/\s+/);
-  const hasValidWord = words.some(word => /^[a-zA-ZÀ-ÿĀ-žА-я\-'\.]+$/.test(word));
+  const hasValidWord = words.some(word => /^[a-zA-Z�-�A-�?-?\-'\.]+$/.test(word));
   
   // Exclude obvious non-names and conversational phrases
   const excludedWords = ['hello', 'hi', 'yes', 'no', 'ok', 'okay', 'thanks', 'thank', 'please', 'help', 'urgent', 'asap', 'today', 'tomorrow', 'morning', 'afternoon', 'evening', 'problem', 'issue', 'broken', 'toilet', 'sink', 'drain', 'pipe', 'water', 'plumber', 'plumbing', 'appointment', 'book', 'schedule', 'ready', 'provide', 'details', 'give', 'tell', 'information', 'data', 'waiting', 'prepared', 'clogged', 'blocked', 'leaking', 'dripping', 'running', 'slow', 'stopped', 'backing', 'overflowing', 'cold', 'hot', 'pressure', 'flow', 'flush', 'handle', 'tank'];
@@ -5031,7 +5136,7 @@ async function verifyEmailConfirmation() {
     const emailSent = stateMachine.clientData.emailConfirmationSent || false;
     const appointmentCreated = stateMachine.currentState === 'booking_complete' || stateMachine.currentState === 'call_ending';
     
-    console.log('📧 Email verification - sent:', emailSent, 'appointment created:', appointmentCreated);
+    console.log('?? Email verification - sent:', emailSent, 'appointment created:', appointmentCreated);
     
     return {
       sent: emailSent && appointmentCreated,
@@ -5039,7 +5144,7 @@ async function verifyEmailConfirmation() {
       email: stateMachine.clientData.email
     };
   } catch (error) {
-    console.error('📧 Email verification failed:', error);
+    console.error('?? Email verification failed:', error);
     return { sent: false, error: error.message };
   }
 }
@@ -5047,7 +5152,7 @@ async function verifyEmailConfirmation() {
 // Send confirmation email using simple working email service
 async function sendConfirmationEmail() {
   try {
-    console.log('📧 Attempting to send confirmation email to:', stateMachine.clientData.email);
+    console.log('?? Attempting to send confirmation email to:', stateMachine.clientData.email);
     
     // Calculate estimated duration based on issue type
     const estimatedDuration = calculateServiceDuration(stateMachine.clientData.issueDescription);
@@ -5085,17 +5190,17 @@ async function sendConfirmationEmail() {
       stateMachine.clientData.emailConfirmationSent = true;
       stateMachine.clientData.emailSentTimestamp = emailResult.timestamp;
       
-      console.log('✅ Confirmation email sent successfully to:', stateMachine.clientData.email);
+      console.log('? Confirmation email sent successfully to:', stateMachine.clientData.email);
       return { success: true, timestamp: emailResult.timestamp, method: 'email' };
       
     } catch (emailError) {
-      console.error('📧 Email sending failed, trying SMS backup:', emailError);
+      console.error('?? Email sending failed, trying SMS backup:', emailError);
       
       // Try SMS as backup if email fails
       const smsResult = await sendSMSConfirmation(bookingDetails);
       
       if (smsResult && smsResult.success) {
-        console.log('✅ SMS confirmation sent as backup to:', bookingDetails.phone);
+        console.log('? SMS confirmation sent as backup to:', bookingDetails.phone);
         stateMachine.clientData.smsConfirmationSent = true;
         return { success: true, timestamp: new Date().toISOString(), method: 'sms' };
       } else {
@@ -5104,16 +5209,16 @@ async function sendConfirmationEmail() {
     }
     
   } catch (error) {
-    console.error('📧 All confirmation methods failed:', error);
+    console.error('?? All confirmation methods failed:', error);
     // Log for manual follow-up
-    console.log('📧 MANUAL FOLLOW-UP REQUIRED: Send confirmation to', stateMachine.clientData.email);
+    console.log('?? MANUAL FOLLOW-UP REQUIRED: Send confirmation to', stateMachine.clientData.email);
     throw error;
   }
 }
 
 // Terminate the call gracefully
 function terminateCall(reason = 'conversation_complete') {
-  console.log('📞 Terminating call - reason:', reason);
+  console.log('?? Terminating call - reason:', reason);
   
   // EMERGENCY EMAIL SEND: If we have complete booking data but no email sent, try to send it
   const hasCompleteData = stateMachine.clientData.name && 
@@ -5122,14 +5227,14 @@ function terminateCall(reason = 'conversation_complete') {
   const emailNotSent = !stateMachine.clientData.emailConfirmationSent;
   
   if (hasCompleteData && emailNotSent && (reason === 'unexpected_disconnect' || reason === 'error')) {
-    console.log('🚨 Emergency email send - completing booking before call ends');
+    console.log('?? Emergency email send - completing booking before call ends');
     
     // Try to complete the booking quickly
     try {
       // Force booking completion in emergency mode
       confirmAppointmentBooking('yes', true); // true = emergency mode
     } catch (error) {
-      console.error('🚨 Emergency booking failed:', error);
+      console.error('?? Emergency booking failed:', error);
     }
   }
   
@@ -5148,7 +5253,7 @@ function terminateCall(reason = 'conversation_complete') {
     emailSent: stateMachine.clientData.emailConfirmationSent || false
   };
   
-  console.log('📞 Call terminated - Summary:', JSON.stringify(summary, null, 2));
+  console.log('?? Call terminated - Summary:', JSON.stringify(summary, null, 2));
   
   // Trigger any cleanup or post-call actions
   try {
@@ -5157,7 +5262,7 @@ function terminateCall(reason = 'conversation_complete') {
     
     // Mark for quality assurance review if needed
     if (reason === 'error' || !summary.emailSent) {
-      console.log('🔍 Call marked for QA review - reason:', reason);
+      console.log('?? Call marked for QA review - reason:', reason);
     }
     
     // Set termination signal for the WebSocket handler to pick up
@@ -5168,7 +5273,7 @@ function terminateCall(reason = 'conversation_complete') {
     };
     
   } catch (error) {
-    console.error('📞 Post-call cleanup failed:', error);
+    console.error('?? Post-call cleanup failed:', error);
   }
   
   // Return call termination signal
@@ -5189,12 +5294,12 @@ if (!stateMachine.callStartTime) {
  */
 function setCallerPhoneNumber(phoneNumber) {
   stateMachine.callerPhoneNumber = phoneNumber;
-  console.log('📞 Caller phone number set:', phoneNumber);
+  console.log('?? Caller phone number set:', phoneNumber);
 }
 
 // Comprehensive call termination with email verification
 async function terminateCall(input = '') {
-  console.log('📞 Terminating call with comprehensive cleanup...');
+  console.log('?? Terminating call with comprehensive cleanup...');
   
   try {
     // Final attempt to send email confirmation if not sent
@@ -5202,7 +5307,7 @@ async function terminateCall(input = '') {
         stateMachine.clientData.email && 
         stateMachine.appointmentBooked) {
       
-      console.log('📧 Final attempt to send email confirmation...');
+      console.log('?? Final attempt to send email confirmation...');
       
       try {
         
@@ -5221,17 +5326,17 @@ async function terminateCall(input = '') {
         };
         
         await sendBookingConfirmationEmail(finalBookingDetails);
-        console.log('✅ Final email confirmation sent successfully!');
+        console.log('? Final email confirmation sent successfully!');
         
       } catch (emailError) {
-        console.error('❌ Final email attempt failed:', emailError);
+        console.error('? Final email attempt failed:', emailError);
         
         // Log manual follow-up requirement
-        console.log('📋 MANUAL FOLLOW-UP REQUIRED:');
-        console.log('📧 Email:', stateMachine.clientData.email);
-        console.log('👤 Name:', stateMachine.clientData.name);
-        console.log('🕐 Appointment:', stateMachine.nextSlot?.toISOString());
-        console.log('📍 Address:', stateMachine.clientData.address);
+        console.log('?? MANUAL FOLLOW-UP REQUIRED:');
+        console.log('?? Email:', stateMachine.clientData.email);
+        console.log('?? Name:', stateMachine.clientData.name);
+        console.log('?? Appointment:', stateMachine.nextSlot?.toISOString());
+        console.log('?? Address:', stateMachine.clientData.address);
       }
     }
     
@@ -5251,7 +5356,7 @@ async function terminateCall(input = '') {
       conversationLength: stateMachine.conversationHistory.length
     };
     
-    console.log('📊 Call Summary:', JSON.stringify(callSummary, null, 2));
+    console.log('?? Call Summary:', JSON.stringify(callSummary, null, 2));
     
     // Track conversation completion
     trackConversationSuccess(stateMachine.appointmentBooked);
@@ -5278,12 +5383,12 @@ async function terminateCall(input = '') {
     stateMachine.conversationHistory = [];
     stateMachine.clientData = {};
     
-    console.log('🔄 State machine reset for next call');
+    console.log('?? State machine reset for next call');
     
     return "Thank you for calling Usher Fix Plumbing. Your appointment has been confirmed and you'll receive an email confirmation shortly. Have a great day!";
     
   } catch (error) {
-    console.error('❌ Error during call termination:', error);
+    console.error('? Error during call termination:', error);
     return "Thank you for calling Usher Fix Plumbing. Have a great day!";
   }
 }
@@ -5296,11 +5401,11 @@ async function verifyEmailConfirmation() {
     const timeSinceSent = Date.now() - new Date(stateMachine.clientData.emailSentTimestamp).getTime();
     const minutesSinceSent = Math.floor(timeSinceSent / (1000 * 60));
     
-    console.log(`📧 Email confirmation sent ${minutesSinceSent} minutes ago`);
+    console.log(`?? Email confirmation sent ${minutesSinceSent} minutes ago`);
     return true;
   }
   
-  console.log('❌ No email confirmation record found');
+  console.log('? No email confirmation record found');
   return false;
 }
 
@@ -5325,7 +5430,7 @@ async function analyzeFastInput(input) {
     });
     
     const result = JSON.parse(response.choices[0].message.content.trim());
-    console.log(`⚡ Fast analysis completed in ${Date.now() - startTime}ms`);
+    console.log(`? Fast analysis completed in ${Date.now() - startTime}ms`);
     return result;
   } catch (error) {
     console.error('Fast analysis error:', error.message);
@@ -5432,10 +5537,10 @@ async function collectSpecialInstructions(input) {
   // Store special instructions
   if (input && input.trim()) {
     stateMachine.clientData.specialInstructions = input.trim();
-    console.log('✅ Special instructions recorded:', input.trim());
+    console.log('? Special instructions recorded:', input.trim());
   } else {
     stateMachine.clientData.specialInstructions = 'No special instructions';
-    console.log('✅ No special instructions provided');
+    console.log('? No special instructions provided');
   }
   
   // Now propose the appointment with calculated travel time
@@ -5453,7 +5558,7 @@ async function collectSpecialInstructions(input) {
     hour12: true
   });
   
-  console.log('🎯 Proposing appointment with travel calculation:');
+  console.log('?? Proposing appointment with travel calculation:');
   console.log(`   Travel time: ${travelTime}`);
   console.log(`   Total buffer: ${totalBuffer} minutes`);
   console.log(`   Proposed time: ${formattedTime}`);
@@ -5511,6 +5616,6 @@ module.exports = {
     stateMachine.awaitingConfirmation = false;
     stateMachine.pendingConfirmation = null;
     stateMachine.safetyConcern = false;
-    console.log('🔄 State machine reset to initial state');
+    console.log('?? State machine reset to initial state');
   }
 };
