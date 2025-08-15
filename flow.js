@@ -734,20 +734,46 @@ async function autoBookAppointment() {
       console.log('?? Continuing with standard booking process');
     }
     
-    // Get next available slot
-    const now = new Date();
-    const nextSlot = await getNextAvailableSlot(accessToken, now);
-    if (!nextSlot) {
-      console.error('? No available appointment slots found');
-      const response = await getResponse(
-        'I apologize, but I\'m having trouble accessing our scheduling system right now. Let me get this sorted for you. I\'ll have someone from our office call you within the next hour to schedule your appointment. Is that okay?',
-        stateMachine.conversationHistory
-      );
-      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-      return response;
+    // ✅ SMART SCHEDULING: Find most travel-efficient slot first
+    console.log('🚗 PRIORITY: Using smart scheduling to minimize travel distance and fuel consumption...');
+    let smartSlotResult = null;
+    try {
+      const { findMostEfficientSlot } = require('./location-optimizer');
+      smartSlotResult = await findMostEfficientSlot(accessToken, stateMachine.clientData.address);
+      
+      if (smartSlotResult && smartSlotResult.slot) {
+        console.log('🎯 SMART SCHEDULING SUCCESS: Found optimal slot!');
+        console.log(`   ⚡ Efficiency Level: ${smartSlotResult.analysis.efficiency}`);
+        console.log(`   🚗 Travel Distance: ${smartSlotResult.analysis.travelDistance.toFixed(1)}km`);
+        console.log(`   💰 Estimated Savings: $${smartSlotResult.analysis.fuelSavings.costAUD} AUD`);
+        console.log(`   💡 Strategy: ${smartSlotResult.analysis.reason}`);
+        
+        // Use the optimized slot
+        stateMachine.nextSlot = smartSlotResult.slot;
+        stateMachine.smartScheduling = smartSlotResult.analysis;
+      } else {
+        console.log('⚠️ Smart scheduling unavailable, using standard slot selection...');
+      }
+    } catch (smartSchedulingError) {
+      console.error('⚠️ Smart scheduling failed, falling back to standard:', smartSchedulingError.message);
     }
     
-    stateMachine.nextSlot = nextSlot;
+    // Fallback to standard slot selection if smart scheduling failed
+    if (!stateMachine.nextSlot) {
+      console.log('📅 Using standard next available slot...');
+      const now = new Date();
+      const nextSlot = await getNextAvailableSlot(accessToken, now);
+      if (!nextSlot) {
+        console.error('❌ No available appointment slots found');
+        const response = await getResponse(
+          'I apologize, but I\'m having trouble accessing our scheduling system right now. Let me get this sorted for you. I\'ll have someone from our office call you within the next hour to schedule your appointment. Is that okay?',
+          stateMachine.conversationHistory
+        );
+        stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+        return response;
+      }
+      stateMachine.nextSlot = nextSlot;
+    }
     console.log(`? Available slot found: ${nextSlot}`);
     
     // Format appointment time
@@ -854,30 +880,34 @@ async function autoBookAppointment() {
         console.error('?? Custom email failed, but Google Calendar invitation was sent:', emailError.message);
       }
       
-      const response = `?? Appointment Successfully Booked!
+      const response = `🎯 Appointment Successfully Booked!
 
-?? Date & Time: ${appointmentTime}
-?? Location: ${stateMachine.clientData.address}
-?? Reference Number: ${referenceNumber}
-?? Email Confirmation: Being sent to ${stateMachine.clientData.email}
+📅 Date & Time: ${appointmentTime}
+📍 Location: ${stateMachine.clientData.address}
+🎫 Reference Number: ${referenceNumber}
+📧 Email Confirmation: Being sent to ${stateMachine.clientData.email}
 
-? Your appointment is confirmed! Our technician will arrive within the scheduled time window.${
-  stateMachine.clientData.locationAnalysis?.priority === 'high_efficiency' 
-    ? '\n\n?? TRAVEL EFFICIENCY: ' + stateMachine.clientData.locationAnalysis.message.replace('Great news! ', '') 
+✅ Your appointment is confirmed! Our technician will arrive within the scheduled time window.${
+  stateMachine.smartScheduling && stateMachine.smartScheduling.efficiency === 'high_efficiency'
+    ? `\n\n🌟 SMART SCHEDULING OPTIMIZATION: ${stateMachine.smartScheduling.reason}! This saves approximately ${stateMachine.smartScheduling.fuelSavings.distanceKm}km of travel distance and $${stateMachine.smartScheduling.fuelSavings.costAUD} in fuel costs.`
+    : stateMachine.smartScheduling && stateMachine.smartScheduling.efficiency === 'medium_efficiency'
+    ? `\n\n⚡ EFFICIENT SCHEDULING: ${stateMachine.smartScheduling.reason}. This reduces travel by ${stateMachine.smartScheduling.fuelSavings.distanceKm}km compared to random scheduling.`
+    : stateMachine.clientData.locationAnalysis?.priority === 'high_efficiency' 
+    ? '\n\n🚗 TRAVEL EFFICIENCY: ' + stateMachine.clientData.locationAnalysis.message.replace('Great news! ', '') 
     : stateMachine.clientData.locationAnalysis?.distanceFromCenter > 25 
-      ? `\n\n??? LOCATION NOTE: Your address is ${Math.round(stateMachine.clientData.locationAnalysis.distanceFromCenter)}km from our central service area, so we've scheduled extra travel time.`
+      ? `\n\n🌍 LOCATION NOTE: Your address is ${Math.round(stateMachine.clientData.locationAnalysis.distanceFromCenter)}km from our central service area, so we've scheduled extra travel time.`
       : ''
 }
 
-?? You will receive:
-� Calendar invitation with appointment details
-� Email confirmation with our contact information
-� Reminder notifications before your appointment
+📋 You will receive:
+• Calendar invitation with appointment details
+• Email confirmation with our contact information
+• Reminder notifications before your appointment
 
-You can:
-� Say "CANCEL APPOINTMENT" to cancel
-� Say "RESCHEDULE" to change the time
-� Say "POSTPONE" to delay the appointment
+🔧 You can:
+• Say "CANCEL APPOINTMENT" to cancel
+• Say "RESCHEDULE" to change the time
+• Say "POSTPONE" to delay the appointment
 
 Is there anything else I can help you with?`;
       
@@ -2126,7 +2156,7 @@ async function askNextQuestion(input) {
   )) {
     console.log('askNextQuestion: BOOKING INTERRUPT - Customer wants to book immediately');
     stateMachine.currentState = 'ask_booking';
-    const response = await getResponse("Great! Let's get that appointment booked for you. I'll need to collect a few details - your full name, email address, and complete address. You can give me all three together if it's easier, or we can go one by one. What would you prefer?", stateMachine.conversationHistory);
+    const response = "Great! Let's get that appointment booked for you. I'll need to collect a few details - your full name, email address, and complete address. You can give me all three together if it's easier, or we can go one by one. What would you prefer?";
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     return response;
   }
@@ -2189,7 +2219,7 @@ async function askBooking(input) {
     console.log('askBooking: Customer declined booking');
     stateMachine.currentState = 'general';
     
-    const response = await getResponse("No problem! Is there anything else I can help you with? I can provide DIY tips or answer any other plumbing questions you might have.", stateMachine.conversationHistory);
+    const response = "No problem! Is there anything else I can help you with? I can provide DIY tips or answer any other plumbing questions you might have.";
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     return response;
     
@@ -2261,14 +2291,15 @@ async function askBooking(input) {
     stateMachine.currentState = 'collect_details';
     stateMachine.questionIndex = 0;
     
-    const response = await getResponse("Perfect! I'll need to collect a few details to book your appointment. I need your full name, email address, and complete address. You can give me all three together if you like, or we can go one by one. What works better for you?", stateMachine.conversationHistory);
+    // Return direct message instead of using getResponse to avoid AI generation
+    const response = "Perfect! I'll need to collect a few details to book your appointment. I need your full name, email address, and complete address. You can give me all three together if you like, or we can go one by one. What works better for you?";
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     return response;
     
   } else {
     // Unclear response, ask for clarification
     console.log('askBooking: Unclear response, asking for clarification');
-    const response = await getResponse("I'm not sure if you'd like to book an appointment or not. Could you please let me know - would you like me to schedule a plumber to come out and fix this issue?", stateMachine.conversationHistory);
+    const response = "I'm not sure if you'd like to book an appointment or not. Could you please let me know - would you like me to schedule a plumber to come out and fix this issue?";
     stateMachine.conversationHistory.push({ role: 'assistant', content: response });
     return response;
   }
@@ -3021,16 +3052,42 @@ async function handleAppointmentBooking(input) {
 
   let nextSlot;
   
+  // 🚗 SMART SCHEDULING: Try to find optimal slot first (for non-urgent bookings)
+  if (!stateMachine.clientData.urgent && !input.toLowerCase().includes('asap') && !input.toLowerCase().includes('soon')) {
+    try {
+      console.log('🚗 SMART SCHEDULING: Finding travel-optimized slot for customer...');
+      const { findMostEfficientSlot } = require('./location-optimizer');
+      const smartSlotResult = await findMostEfficientSlot(accessToken, stateMachine.clientData.address, earliestStartTime);
+      
+      if (smartSlotResult && smartSlotResult.slot && smartSlotResult.slot >= earliestStartTime && smartSlotResult.slot <= maxEndDate) {
+        nextSlot = smartSlotResult.slot;
+        stateMachine.smartSchedulingPreview = smartSlotResult.analysis;
+        
+        console.log('🎯 SMART SCHEDULING SUCCESS for quote:');
+        console.log(`   ⚡ Efficiency: ${smartSlotResult.analysis.efficiency}`);
+        console.log(`   🚗 Travel Distance: ${smartSlotResult.analysis.travelDistance.toFixed(1)}km`);
+        console.log(`   💰 Estimated Savings: $${smartSlotResult.analysis.fuelSavings.costAUD} AUD`);
+        console.log(`   💡 Strategy: ${smartSlotResult.analysis.reason}`);
+      } else {
+        console.log('⚠️ Smart scheduling found no optimal slots for today, using standard selection');
+      }
+    } catch (smartError) {
+      console.error('⚠️ Smart scheduling failed for quote, using standard:', smartError.message);
+    }
+  }
+  
   if (stateMachine.clientData.urgent || input.toLowerCase().includes('asap') || input.toLowerCase().includes('soon')) {
-    // For regular bookings, find the next available slot
-    nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
+    // For urgent bookings, find the next available slot
+    if (!nextSlot) {
+      nextSlot = await getNextAvailableSlot(accessToken, earliestStartTime);
+    }
     if (!nextSlot || nextSlot > maxEndDate) {
-      console.log('handleAppointmentBooking: No slot available today');
-      return "Sorry, no slots are available today. Would you like to try tomorrow?";
+      console.log('handleAppointmentBooking: No urgent slot available today');
+      return "Sorry, no slots are available today for urgent service. Would you like to try tomorrow?";
     }
   } else if (!lastAppointment) {
     // First booking of the day - use customer's exact requested time if possible
-    if (input && !input.toLowerCase().includes('next available')) {
+    if (!nextSlot && input && !input.toLowerCase().includes('next available')) {
       const parsePrompt = `Parse the preferred appointment time from: "${input}". Current time is ${now.toISOString()}. Return ISO datetime string (YYYY-MM-DDTHH:mm:00Z) or "invalid" if can't parse. Assume Australia/Brisbane timezone.`;
       let preferredStr = await getResponse(parsePrompt);
       
@@ -3095,7 +3152,11 @@ async function handleAppointmentBooking(input) {
   
   // Provide context about the scheduling
   let schedulingContext = '';
-  if (lastAppointment) {
+  if (stateMachine.smartSchedulingPreview && stateMachine.smartSchedulingPreview.efficiency === 'high_efficiency') {
+    schedulingContext = ` 🌟 SMART SCHEDULING: ${stateMachine.smartSchedulingPreview.reason}! This optimal time slot saves approximately ${stateMachine.smartSchedulingPreview.fuelSavings.distanceKm}km of travel distance.`;
+  } else if (stateMachine.smartSchedulingPreview && stateMachine.smartSchedulingPreview.efficiency === 'medium_efficiency') {
+    schedulingContext = ` ⚡ EFFICIENT SCHEDULING: ${stateMachine.smartSchedulingPreview.reason}. This reduces travel compared to random scheduling.`;
+  } else if (lastAppointment) {
     const lastLocation = lastAppointment.location?.displayName || 'our last job';
     const travelTime = await calculateTravelTime(lastLocation, stateMachine.clientData.address);
     
@@ -3948,24 +4009,58 @@ async function handleGeneralQuery(input) {
 
   const bookingTriggers = ['schedule', 'book', 'appointment', 'time', 'today', 'tomorrow', 'pm', 'am', 'morning', 'afternoon', 'evening'];
   const hasBookingIntent = bookingTriggers.some(trigger => input.toLowerCase().includes(trigger));
-  const hasCompleteData = extractedData.name && extractedData.email && extractedData.address;
+  
+  // Check for complete data in both current input AND stored client data
+  const hasCompleteDataFromInput = extractedData.name && extractedData.email && extractedData.address;
+  const hasCompleteDataStored = stateMachine.clientData.name && stateMachine.clientData.email && stateMachine.clientData.address;
+  const hasCompleteData = hasCompleteDataFromInput || hasCompleteDataStored;
+  
   const readyToProceedPhrases = ['nothing', 'no', 'done', 'thats all', 'all set', 'ready', 'go ahead', 'nothing else', 'none', 'nope', 'finished'];
   const seemsReady = readyToProceedPhrases.some(phrase => input.toLowerCase().includes(phrase));
 
+  console.log('🔍 BOOKING LOGIC CHECK:', {
+    hasBookingIntent,
+    hasCompleteDataFromInput,
+    hasCompleteDataStored,
+    hasCompleteData,
+    allDetailsCollected: stateMachine.allDetailsCollected,
+    clientData: stateMachine.clientData
+  });
+
+  // If we have complete data and booking intent, proceed to booking immediately
+  if (hasCompleteData && hasBookingIntent) {
+    console.log('🎯 BOOKING TRIGGER DETECTED with complete data - proceeding to auto-booking!');
+    
+    // Ensure client data is properly set from both sources
+    if (extractedData.name) stateMachine.clientData.name = extractedData.name;
+    if (extractedData.email) stateMachine.clientData.email = extractedData.email;
+    if (extractedData.address) stateMachine.clientData.address = extractedData.address;
+    
+    // Set phone from caller ID if not provided
+    if (!stateMachine.clientData.phone && stateMachine.callerPhoneNumber) {
+      stateMachine.clientData.phone = stateMachine.callerPhoneNumber;
+    }
+    
+    stateMachine.allDetailsCollected = true;
+    return await autoBookAppointment();
+  }
+
   // Check if customer wants to start the booking process without providing details first
   if (hasBookingIntent && !hasCompleteData && !stateMachine.allDetailsCollected) {
-    console.log('?? Booking intent detected - starting step-by-step detail collection');
+    console.log('⚠️ Booking intent detected - starting step-by-step detail collection');
     return await startStepByStepCollection();
   }
 
-  if (hasCompleteData && (hasBookingIntent || seemsReady)) {
-    console.log('?? BOOKING TRIGGER DETECTED with complete data:', extractedData);
-    // Update state machine with complete data
-    stateMachine.clientData.name = extractedData.name;
-    stateMachine.clientData.email = extractedData.email;
-    stateMachine.clientData.address = extractedData.address;
-    stateMachine.allDetailsCollected = true;
+  // Check if customer is ready to proceed with stored complete data (answering questions like "when would you like to schedule?")
+  if (hasCompleteDataStored && (seemsReady || hasBookingIntent)) {
+    console.log('🎯 CUSTOMER READY TO PROCEED with stored data - proceeding to auto-booking!');
     
+    // Set phone from caller ID if not provided
+    if (!stateMachine.clientData.phone && stateMachine.callerPhoneNumber) {
+      stateMachine.clientData.phone = stateMachine.callerPhoneNumber;
+    }
+    
+    stateMachine.allDetailsCollected = true;
     return await autoBookAppointment();
   }
 
@@ -4295,6 +4390,22 @@ async function handleDetailConfirmation(input) {
   }
 
   const lowerInput = input.toLowerCase().trim();
+  
+  // ?? CRITICAL FIX: Detect if customer is providing new information instead of confirming
+  const isEmail = input.includes('@') && /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(input);
+  const isAddress = input.toLowerCase().includes('street') || input.toLowerCase().includes('brisbane') || 
+                   input.toLowerCase().includes('qld') || /\d+\s+[a-zA-Z\s]+/.test(input);
+  const isName = /^[a-zA-Z\s]{2,50}$/.test(input.trim()) && input.trim().split(' ').length >= 2 && 
+                 !input.includes('@') && !isAddress;
+  
+  // If customer provides new information, process it instead of treating as confirmation
+  if (isEmail || isAddress || isName) {
+    console.log('?? Customer provided new information, canceling confirmation and processing data');
+    stateMachine.awaitingConfirmation = false;
+    stateMachine.pendingConfirmation = null;
+    return await collectClientDetails(input);
+  }
+  
   const isConfirmed = lowerInput.includes('yes') ||
                      lowerInput.includes('correct') ||
                      lowerInput.includes('right') ||
@@ -4329,39 +4440,26 @@ async function handleDetailConfirmation(input) {
     
     // Continue with detail collection (this will check for next missing detail)
     return await collectClientDetails('');
-  } else if (isRejected || (confirmation.type === 'name' && isValidName(input)) || (confirmation.type === 'email' && input.includes('@'))) {
-    console.log(`?? Detail ${isRejected ? 'rejected' : 'corrected'}: ${confirmation.type}`);
-    const correctedInput = validateAndCorrectInput(input);
+  } else if (isRejected) {
+    console.log(`?? Detail rejected: ${confirmation.type}`);
+    // Clear temp data and ask for correct information
+    delete stateMachine.clientData[`temp_${confirmation.type}`];
+    stateMachine.awaitingConfirmation = false;
+    stateMachine.pendingConfirmation = null;
+      
+    const correctionPrompts = {
+      name: "No problem! Could you please tell me your correct full name?",
+      email: "No problem! Could you please spell out your correct email address?",
+      address: "No problem! Could you please give me your correct address?",
+      phone: "No problem! Could you please give me your correct phone number?",
+    };
     
-    if (confirmation.type === 'name' && isValidName(correctedInput)) {
-      stateMachine.clientData.temp_name = correctedInput;
-      return await requestDetailConfirmation('name', correctedInput);
-    } else if (confirmation.type === 'email' && correctedInput.includes('@')) {
-      stateMachine.clientData.temp_email = correctedInput.toLowerCase();
-      return await requestDetailConfirmation('email', correctedInput.toLowerCase());
-    } else if (confirmation.type === 'address') {
-      stateMachine.clientData.temp_address = correctedInput;
-      return await requestDetailConfirmation('address', correctedInput);
-    } else {
-      // Clear temp data and ask for correct information
-      delete stateMachine.clientData[`temp_${confirmation.type}`];
-      stateMachine.awaitingConfirmation = false;
-      stateMachine.pendingConfirmation = null;
-      
-      const correctionPrompts = {
-        name: "No problem! Could you please tell me your correct full name?",
-        email: "No problem! Could you please spell out your correct email address?",
-        address: "No problem! Could you please give me your correct address?",
-        phone: "No problem! Could you please give me your correct phone number?",
-      };
-      
-      const response = await getResponse(
-        correctionPrompts[confirmation.type] || "No problem! Could you please provide the correct information?",
-        stateMachine.conversationHistory
-      );
-      stateMachine.conversationHistory.push({ role: 'assistant', content: response });
-      return response;
-    }
+    const response = await getResponse(
+      correctionPrompts[confirmation.type] || "No problem! Could you please provide the correct information?",
+      stateMachine.conversationHistory
+    );
+    stateMachine.conversationHistory.push({ role: 'assistant', content: response });
+    return response;
   } else {
     console.log(`?? Unclear confirmation response: ${input}`);
     

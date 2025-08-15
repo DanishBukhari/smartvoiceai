@@ -297,10 +297,267 @@ function getClusterStatus(date) {
   };
 }
 
+/**
+ * Find optimal appointment slots that minimize travel distance
+ * This function implements smart scheduling to reduce fuel consumption and travel time
+ */
+async function findOptimalTimeSlots(newCoordinates, preferredDate = null, accessToken) {
+  console.log('🚗 SMART SCHEDULING: Finding optimal slots to minimize travel distance...');
+  
+  try {
+    const startDate = preferredDate || new Date();
+    const endDate = new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000); // Next 7 days
+    
+    // Get existing appointments from Google Calendar
+    const { google } = require('googleapis');
+    const oauth2Client = new (require('google-auth-library')).OAuth2Client(
+      process.env.GOOGLE_CLIENT_ID, 
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    oauth2Client.setCredentials({ refresh_token: process.env.GOOGLE_REFRESH_TOKEN });
+    
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    const calendarId = process.env.GOOGLE_CALENDAR_ID || 'primary';
+    
+    const response = await calendar.events.list({
+      calendarId,
+      timeMin: startDate.toISOString(),
+      timeMax: endDate.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      q: 'plumbing OR appointment'
+    });
+    
+    const existingAppointments = response.data.items.filter(event => 
+      event.location && event.start.dateTime
+    ).map(event => ({
+      date: new Date(event.start.dateTime),
+      address: event.location,
+      coordinates: null // Will be geocoded if needed
+    }));
+    
+    console.log(`🗓️ Found ${existingAppointments.length} existing appointments for optimization`);
+    
+    // Find optimal slots for each day
+    const optimalSlots = [];
+    
+    for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+      const targetDate = new Date(startDate);
+      targetDate.setDate(targetDate.getDate() + dayOffset);
+      
+      const dayAppointments = existingAppointments.filter(apt => 
+        apt.date.toDateString() === targetDate.toDateString()
+      );
+      
+      if (dayAppointments.length === 0) {
+        // No appointments this day - any slot is optimal
+        const optimalTime = new Date(targetDate);
+        optimalTime.setHours(9, 0, 0, 0); // Start at 9 AM
+        
+        optimalSlots.push({
+          dateTime: optimalTime,
+          efficiency: 'standard',
+          travelDistance: 0,
+          reason: 'First appointment of the day - no travel optimization needed',
+          clusterOpportunity: false
+        });
+        continue;
+      }
+      
+      // Find best insertion points that minimize total travel distance
+      const bestSlots = await findBestInsertionSlots(
+        dayAppointments, 
+        newCoordinates, 
+        targetDate
+      );
+      
+      optimalSlots.push(...bestSlots);
+    }
+    
+    // Sort by efficiency and travel distance
+    optimalSlots.sort((a, b) => {
+      const efficiencyWeight = { 'high_efficiency': 3, 'medium_efficiency': 2, 'standard': 1 };
+      const aScore = efficiencyWeight[a.efficiency] - (a.travelDistance / 10);
+      const bScore = efficiencyWeight[b.efficiency] - (b.travelDistance / 10);
+      return bScore - aScore;
+    });
+    
+    console.log(`🎯 Generated ${optimalSlots.length} optimal time slots`);
+    console.log(`🏆 Best option: ${optimalSlots[0]?.reason}`);
+    
+    return optimalSlots.slice(0, 5); // Return top 5 optimal slots
+    
+  } catch (error) {
+    console.error('❌ Error finding optimal slots:', error.message);
+    return [];
+  }
+}
+
+/**
+ * Find the best time slots within a day to minimize travel distance
+ */
+async function findBestInsertionSlots(dayAppointments, newCoordinates, targetDate) {
+  const slots = [];
+  
+  // Sort appointments by time
+  dayAppointments.sort((a, b) => a.date.getTime() - b.date.getTime());
+  
+  // Try inserting before first appointment
+  if (dayAppointments.length > 0) {
+    const firstApt = dayAppointments[0];
+    const earlySlot = new Date(firstApt.date.getTime() - 2 * 60 * 60 * 1000); // 2 hours before
+    
+    if (earlySlot.getHours() >= 8) { // Not before 8 AM
+      const distance = await calculateTravelDistance(newCoordinates, firstApt.address);
+      
+      slots.push({
+        dateTime: earlySlot,
+        efficiency: distance < 10 ? 'high_efficiency' : distance < 25 ? 'medium_efficiency' : 'standard',
+        travelDistance: distance,
+        reason: `Scheduled before nearby appointment (${distance.toFixed(1)}km away)`,
+        clusterOpportunity: distance < 10,
+        nextAppointment: firstApt.address
+      });
+    }
+  }
+  
+  // Try inserting between appointments
+  for (let i = 0; i < dayAppointments.length - 1; i++) {
+    const currentApt = dayAppointments[i];
+    const nextApt = dayAppointments[i + 1];
+    
+    const timeBetween = nextApt.date.getTime() - currentApt.date.getTime();
+    if (timeBetween >= 3 * 60 * 60 * 1000) { // At least 3 hours gap
+      
+      const insertionTime = new Date(currentApt.date.getTime() + 2 * 60 * 60 * 1000); // 2 hours after current
+      
+      const distanceFromCurrent = await calculateTravelDistance(newCoordinates, currentApt.address);
+      const distanceToNext = await calculateTravelDistance(newCoordinates, nextApt.address);
+      const avgDistance = (distanceFromCurrent + distanceToNext) / 2;
+      
+      slots.push({
+        dateTime: insertionTime,
+        efficiency: avgDistance < 10 ? 'high_efficiency' : avgDistance < 25 ? 'medium_efficiency' : 'standard',
+        travelDistance: avgDistance,
+        reason: `Optimally placed between two nearby appointments (avg ${avgDistance.toFixed(1)}km)`,
+        clusterOpportunity: avgDistance < 10,
+        previousAppointment: currentApt.address,
+        nextAppointment: nextApt.address
+      });
+    }
+  }
+  
+  // Try inserting after last appointment
+  if (dayAppointments.length > 0) {
+    const lastApt = dayAppointments[dayAppointments.length - 1];
+    const lateSlot = new Date(lastApt.date.getTime() + 2 * 60 * 60 * 1000); // 2 hours after
+    
+    if (lateSlot.getHours() <= 16) { // Not after 4 PM
+      const distance = await calculateTravelDistance(newCoordinates, lastApt.address);
+      
+      slots.push({
+        dateTime: lateSlot,
+        efficiency: distance < 10 ? 'high_efficiency' : distance < 25 ? 'medium_efficiency' : 'standard',
+        travelDistance: distance,
+        reason: `Scheduled after nearby appointment (${distance.toFixed(1)}km away)`,
+        clusterOpportunity: distance < 10,
+        previousAppointment: lastApt.address
+      });
+    }
+  }
+  
+  return slots;
+}
+
+/**
+ * Calculate travel distance between coordinates and an address
+ */
+async function calculateTravelDistance(coordinates, address) {
+  try {
+    // In a real implementation, you would geocode the address
+    // For now, use mock coordinates based on address patterns
+    const addressCoords = await getCoordinatesFromAddress(address);
+    return calculateDistance(coordinates, addressCoords);
+  } catch (error) {
+    console.error('Error calculating travel distance:', error.message);
+    return 50; // Default to 50km if calculation fails
+  }
+}
+
+/**
+ * Enhanced booking function that finds the most travel-efficient slot
+ */
+async function findMostEfficientSlot(accessToken, newAddress, preferredDate = null) {
+  console.log('🚗 SMART SCHEDULING: Finding most fuel-efficient appointment slot...');
+  
+  try {
+    // Get coordinates for the new appointment
+    const newCoordinates = await getCoordinatesFromAddress(newAddress);
+    console.log(`📍 New appointment coordinates: ${newCoordinates.lat}, ${newCoordinates.lng}`);
+    
+    // Find optimal slots
+    const optimalSlots = await findOptimalTimeSlots(newCoordinates, preferredDate, accessToken);
+    
+    if (optimalSlots.length === 0) {
+      console.log('⚠️ No optimal slots found, falling back to standard scheduling');
+      return null;
+    }
+    
+    const bestSlot = optimalSlots[0];
+    
+    console.log('🎯 OPTIMAL SLOT SELECTED:');
+    console.log(`   📅 Time: ${bestSlot.dateTime.toLocaleString()}`);
+    console.log(`   ⚡ Efficiency: ${bestSlot.efficiency}`);
+    console.log(`   🚗 Travel Distance: ${bestSlot.travelDistance.toFixed(1)}km`);
+    console.log(`   💡 Reason: ${bestSlot.reason}`);
+    
+    if (bestSlot.clusterOpportunity) {
+      console.log('   🌟 HIGH EFFICIENCY: This creates an optimal appointment cluster!');
+    }
+    
+    return {
+      slot: bestSlot.dateTime,
+      analysis: {
+        efficiency: bestSlot.efficiency,
+        travelDistance: bestSlot.travelDistance,
+        reason: bestSlot.reason,
+        clusterOpportunity: bestSlot.clusterOpportunity,
+        fuelSavings: calculateFuelSavings(bestSlot.travelDistance)
+      }
+    };
+    
+  } catch (error) {
+    console.error('❌ Error finding efficient slot:', error.message);
+    return null;
+  }
+}
+
+/**
+ * Calculate estimated fuel savings compared to random scheduling
+ */
+function calculateFuelSavings(optimizedDistance) {
+  const averageRandomDistance = 35; // km - typical random scheduling distance
+  const fuelConsumption = 0.1; // L/km - typical van consumption
+  const fuelPrice = 1.80; // AUD per liter
+  
+  const distanceSaved = Math.max(0, averageRandomDistance - optimizedDistance);
+  const fuelSaved = distanceSaved * fuelConsumption;
+  const moneySaved = fuelSaved * fuelPrice;
+  
+  return {
+    distanceKm: distanceSaved.toFixed(1),
+    fuelLiters: fuelSaved.toFixed(1),
+    costAUD: moneySaved.toFixed(2)
+  };
+}
+
 module.exports = {
   analyzeLocationForBooking,
   addBookingToCluster,
   getClusterStatus,
   calculateDistance,
+  findOptimalTimeSlots,
+  findMostEfficientSlot,
+  calculateTravelDistance,
   SERVICE_AREA
 };
