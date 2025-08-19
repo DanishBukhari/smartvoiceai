@@ -61,7 +61,7 @@ const stateTransitions = {
   'new install/quote': ['ask_booking', 'general'],
   'other': ['ask_booking', 'general'],
   'ask_booking': ['collect_details', 'booking_in_progress'],
-  'collect_details': ['book_appointment', 'ask_booking', 'booking_complete', 'collect_details'],
+  'collect_details': ['book_appointment', 'ask_booking', 'booking_complete', 'collect_details', 'collect_special_instructions'],
   'book_appointment': ['confirm_slot', 'collect_details'],
   'confirm_slot': ['collect_special_instructions', 'book_appointment'],
   'collect_special_instructions': ['booking_complete'],

@@ -590,8 +590,19 @@ async function handleDetailCollection(userInput) {
   const hasAddress = !!(currentData.address);
   const hasPhone = !!(currentData.phone || stateMachine.callerPhoneNumber);
   
-  // Special instructions are optional, not required for booking
-  const hasAllDetails = hasName && hasEmail && hasAddress && hasPhone;
+  // Check if we need to transition to special instructions collection
+  const hasSpecialInstructions = !!(currentData.specialInstructions || stateMachine.specialInstructionsCollected);
+  
+  // If we have all basic details but no special instructions, transition to collect_special_instructions state
+  if (hasName && hasEmail && hasAddress && hasPhone && !hasSpecialInstructions) {
+    console.log('🎯 All basic details collected, transitioning to special instructions collection');
+    const { transitionTo } = require('./stateMachine');
+    transitionTo('collect_special_instructions');
+    return "Do you have any special instructions for our plumber, such as gate access codes or specific areas to focus on?";
+  }
+  
+  // All details collected including special instructions (or skipped)
+  const hasAllDetails = hasName && hasEmail && hasAddress && hasPhone && hasSpecialInstructions;
   
   if (hasAllDetails) {
     console.log('🎯 All details collected, proceeding to appointment booking');

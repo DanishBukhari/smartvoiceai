@@ -409,17 +409,20 @@ async function handleTimeout() {
 async function collectSpecialInstructions(input) {
   console.log('📝 Collecting special instructions:', input);
   
-  if (input.toLowerCase().includes('no') || input.toLowerCase().includes('nothing')) {
-    transitionTo('booking_complete');
-    return "Perfect! Your appointment has been confirmed. Is there anything else I can help you with?";
-  }
-  
   // Store the instructions
   if (!stateMachine.customerData) stateMachine.customerData = {};
-  stateMachine.customerData.specialInstructions = input;
   
-  transitionTo('booking_complete');
-  return "Thank you for those details. I've noted your special instructions and your appointment is now confirmed. Is there anything else I can help you with?";
+  if (input.toLowerCase().includes('no') || input.toLowerCase().includes('nothing') || input.toLowerCase().includes('none')) {
+    stateMachine.customerData.specialInstructions = 'Standard plumbing service - no special requirements';
+  } else {
+    stateMachine.customerData.specialInstructions = input;
+  }
+  
+  console.log('📝 Special instructions recorded:', stateMachine.customerData.specialInstructions);
+  
+  // Now that we have all details including special instructions, proceed to booking
+  const { proceedToBooking } = require('./modules/enhancedBookingFlow');
+  return await proceedToBooking(input);
 }
 
 /**
