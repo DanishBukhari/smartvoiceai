@@ -2,6 +2,13 @@
 const { OpenAI } = require('openai');
 const { calculateTravelTime, extractMinutesFromTravelTime } = require('./travelOptimization');
 const { getLastAppointment } = require('../outlook');
+const { 
+  estimateJobDurationWithAI, 
+  analyzeLocationDistance, 
+  calculateOptimalAppointmentGap,
+  calculateSmartTimeRounding,
+  scheduleAppointmentWithAI 
+} = require('./aiDrivenScheduler');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -44,12 +51,49 @@ const PRIORITY_LEVELS = {
 };
 
 /**
- * Use OpenAI to analyze job complexity and estimate time required
+ * Enhanced AI-driven job complexity analysis
+ * Uses both traditional analysis and new AI-driven estimation
  */
 async function analyzeJobComplexity(issueDescription, customerData = {}) {
-  console.log('🤖 Analyzing job complexity with AI...');
+  console.log('🤖 Analyzing job complexity with enhanced AI...');
   
   try {
+    // Use the new AI-driven duration estimation
+    const aiAnalysis = await estimateJobDurationWithAI(issueDescription, customerData);
+    
+    // Map AI analysis to our expected format
+    const priority = mapComplexityToPriority(aiAnalysis.complexity);
+    
+    return {
+      estimatedDuration: aiAnalysis.estimatedMinutes,
+      minDuration: aiAnalysis.minMinutes || Math.round(aiAnalysis.estimatedMinutes * 0.8),
+      maxDuration: aiAnalysis.maxMinutes || Math.round(aiAnalysis.estimatedMinutes * 1.5),
+      complexity: aiAnalysis.complexity,
+      priority: priority,
+      issueType: determineIssueTypeFromAI(issueDescription, aiAnalysis),
+      riskFactors: aiAnalysis.riskFactors || [],
+      recommendations: aiAnalysis.reasoning || 'AI-driven analysis',
+      confidence: aiAnalysis.reasoning ? 'high' : 'medium',
+      analysisType: 'ai_enhanced'
+    };
+    
+  } catch (aiError) {
+    console.log('⚠️ AI analysis failed, falling back to traditional analysis:', aiError.message);
+    
+    // Fallback to traditional analysis with enhancements
+    return await fallbackJobAnalysis(issueDescription, customerData);
+  }
+}
+
+/**
+ * Fallback job analysis with enhanced logic
+ */
+async function fallbackJobAnalysis(issueDescription, customerData = {}) {
+  try {
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
     const prompt = `
 You are an experienced plumbing contractor analyzing a job request. Based on the description, estimate the time required and assess complexity.
 
@@ -90,7 +134,7 @@ Base estimates:
     });
 
     const analysis = JSON.parse(response.choices[0].message.content);
-    console.log('🧠 AI Job Analysis:', analysis);
+    console.log('🧠 Traditional AI Job Analysis (fallback):', analysis);
     
     return {
       estimatedDuration: analysis.estimatedMinutes || 60,
@@ -98,19 +142,21 @@ Base estimates:
       priority: analysis.priority || 'standard',
       issueType: analysis.issueType || 'other',
       riskFactors: analysis.riskFactors || [],
-      recommendations: analysis.recommendations || ''
+      recommendations: analysis.recommendations || '',
+      confidence: 'medium',
+      analysisType: 'traditional_ai'
     };
     
   } catch (error) {
-    console.error('❌ AI analysis failed, using fallback:', error.message);
-    return fallbackJobAnalysis(issueDescription);
+    console.error('❌ Traditional AI analysis also failed, using rule-based fallback:', error.message);
+    return getRuleBasedJobAnalysis(issueDescription);
   }
 }
 
 /**
- * Fallback job analysis when AI is unavailable
+ * Rule-based fallback analysis when all AI methods fail
  */
-function fallbackJobAnalysis(issueDescription) {
+function getRuleBasedJobAnalysis(issueDescription) {
   const desc = issueDescription.toLowerCase();
   
   // Determine priority
@@ -142,53 +188,257 @@ function fallbackJobAnalysis(issueDescription) {
     priority,
     issueType: 'other',
     riskFactors: [],
-    recommendations: 'Standard plumbing service'
+    recommendations: 'Standard plumbing service rule-based analysis',
+    confidence: 'low',
+    analysisType: 'rule_based'
   };
 }
 
-/**
- * Find the optimal appointment slot considering travel time, job clustering, and priority
- */
-async function findOptimalAppointmentSlot(customerAddress, issueDescription, customerData = {}, accessToken = null) {
-  console.log('🎯 Finding optimal appointment slot with smart scheduling...');
-  
-  // Refresh last booked job location from calendar if we have access token
-  if (accessToken) {
-    try {
-      const { refreshLastBookedJobLocation } = require('./travelOptimization');
-      await refreshLastBookedJobLocation(accessToken);
-    } catch (error) {
-      console.log('⚠️ Could not refresh last booked job location:', error.message);
-    }
+// Helper functions for AI integration
+function mapComplexityToPriority(complexity) {
+  const mapping = {
+    'simple': 'standard',
+    'moderate': 'standard', 
+    'complex': 'urgent',
+    'emergency': 'emergency'
+  };
+  return mapping[complexity] || 'standard';
+}
+
+function determineIssueTypeFromAI(issueDescription, aiAnalysis) {
+  // Use AI analysis if available, otherwise fall back to keyword detection
+  if (aiAnalysis.toolsRequired && aiAnalysis.toolsRequired.length > 0) {
+    const tools = aiAnalysis.toolsRequired.join(' ').toLowerCase();
+    if (tools.includes('toilet')) return 'toilet';
+    if (tools.includes('hot water')) return 'hot_water';
+    if (tools.includes('drain')) return 'drain';
   }
   
-  // Step 1: Analyze the job with AI
-  const jobAnalysis = await analyzeJobComplexity(issueDescription, customerData);
-  console.log(`🔧 Job Analysis - Duration: ${jobAnalysis.estimatedDuration}min, Priority: ${jobAnalysis.priority}, Type: ${jobAnalysis.issueType}`);
+  const desc = issueDescription.toLowerCase();
+  if (desc.includes('toilet')) return 'toilet';
+  if (desc.includes('hot water')) return 'hot_water';
+  if (desc.includes('sink') || desc.includes('tap')) return 'sink';
+  if (desc.includes('burst')) return 'burst';
+  if (desc.includes('drain') || desc.includes('blocked')) return 'drain';
+  if (desc.includes('install')) return 'installation';
   
-  // Step 2: Get existing appointments for location clustering
-  const existingAppointments = await getExistingAppointments(accessToken);
-  
-  // Step 3: Find appointments in similar locations
-  const nearbyAppointments = await findNearbyAppointments(customerAddress, existingAppointments);
-  console.log(`📍 Found ${nearbyAppointments.length} nearby appointments for clustering`);
-  
-  // Step 4: Calculate optimal scheduling considering multiple factors
-  const optimalSlot = await calculateOptimalSlot({
-    customerAddress,
-    jobAnalysis,
-    nearbyAppointments,
-    existingAppointments,
-    accessToken
-  });
-  
-  return optimalSlot;
+  return 'other';
 }
 
 /**
- * Calculate the optimal appointment slot with intelligent scheduling
+ * Enhanced optimal appointment slot finder with AI-driven scheduling
  */
-async function calculateOptimalSlot({ customerAddress, jobAnalysis, nearbyAppointments, existingAppointments, accessToken }) {
+async function findOptimalAppointmentSlot(customerAddress, issueDescription, customerData = {}, accessToken = null) {
+  console.log('🎯 Finding optimal appointment slot with AI-driven smart scheduling...');
+  
+  // Try comprehensive AI-driven scheduling first
+  try {
+    // Refresh last booked job location from calendar if we have access token
+    if (accessToken) {
+      try {
+        const { refreshLastBookedJobLocation } = require('./travelOptimization');
+        await refreshLastBookedJobLocation(accessToken);
+      } catch (error) {
+        console.log('⚠️ Could not refresh last booked job location:', error.message);
+      }
+    }
+
+    // Get previous appointments for context
+    const existingAppointments = await getExistingAppointments(accessToken);
+    
+    // Prepare customer data with address
+    const enrichedCustomerData = {
+      ...customerData,
+      address: customerAddress,
+      conversationContext: `Customer calling about: ${issueDescription}`
+    };
+    
+    // Use comprehensive AI scheduling
+    const aiSchedulingResult = await scheduleAppointmentWithAI(
+      enrichedCustomerData,
+      issueDescription,
+      existingAppointments.slice(-5), // Last 5 appointments for context
+      []
+    );
+    
+    if (aiSchedulingResult) {
+      console.log('✅ AI-driven scheduling successful');
+      
+      // Convert to expected format and add metadata
+      return {
+        start: aiSchedulingResult.start,
+        end: aiSchedulingResult.end,
+        estimatedDuration: aiSchedulingResult.duration,
+        travelTime: `${aiSchedulingResult.travelTime} minutes`,
+        totalBufferMinutes: aiSchedulingResult.gap,
+        priority: aiSchedulingResult.analysis.job.complexity,
+        analysis: aiSchedulingResult.analysis,
+        type: 'ai_optimized',
+        confidence: 'high'
+      };
+    }
+    
+  } catch (aiError) {
+    console.log('⚠️ Comprehensive AI scheduling failed, falling back to hybrid approach:', aiError.message);
+  }
+  
+  // Fallback to enhanced traditional scheduling with AI components
+  try {
+    console.log('🔄 Using hybrid AI-enhanced scheduling...');
+    
+    // Refresh last booked job location from calendar if we have access token
+    if (accessToken) {
+      try {
+        const { refreshLastBookedJobLocation } = require('./travelOptimization');
+        await refreshLastBookedJobLocation(accessToken);
+      } catch (error) {
+        console.log('⚠️ Could not refresh last booked job location:', error.message);
+      }
+    }
+
+    // Step 1: Enhanced AI job analysis  
+    const jobAnalysis = await analyzeJobComplexity(issueDescription, customerData);
+    console.log(`🔧 Job Analysis - Duration: ${jobAnalysis.estimatedDuration}min, Priority: ${jobAnalysis.priority}, Type: ${jobAnalysis.issueType}`);
+
+    // Step 2: Get existing appointments for location clustering
+    const existingAppointments = await getExistingAppointments(accessToken);
+
+    // Step 3: Find appointments in similar locations with AI-enhanced distance analysis
+    const nearbyAppointments = await findNearbyAppointmentsWithAI(customerAddress, existingAppointments);
+    console.log(`📍 Found ${nearbyAppointments.length} nearby appointments for AI-enhanced clustering`);
+
+    // Step 4: Calculate optimal scheduling with AI-enhanced gap calculation
+    const optimalSlot = await calculateOptimalSlotWithAI({
+      customerAddress,
+      jobAnalysis,
+      nearbyAppointments,
+      existingAppointments,
+      accessToken
+    });
+
+    return optimalSlot;
+    
+  } catch (hybridError) {
+    console.error('❌ Hybrid AI scheduling failed, using traditional fallback:', hybridError.message);
+    
+    // Final fallback to original scheduling
+    return await calculateOptimalSlotTraditional({
+      customerAddress,
+      issueDescription,
+      customerData,
+      accessToken
+    });
+  }
+}
+
+/**
+ * AI-enhanced nearby appointments finder
+ */
+async function findNearbyAppointmentsWithAI(customerAddress, appointments) {
+  try {
+    // Use AI-powered distance analysis for more accurate clustering
+    const nearbyAppointments = [];
+    
+    for (const appointment of appointments) {
+      if (appointment.location) {
+        try {
+          const distanceAnalysis = await analyzeLocationDistance(appointment.location, customerAddress);
+          
+          // Consider appointments within 15km as "nearby" for clustering
+          if (distanceAnalysis.distanceKm <= 15) {
+            nearbyAppointments.push({
+              ...appointment,
+              distanceKm: distanceAnalysis.distanceKm,
+              travelMinutes: distanceAnalysis.estimatedTravelMinutes
+            });
+          }
+        } catch (error) {
+          console.log(`⚠️ Could not analyze distance for ${appointment.location}:`, error.message);
+        }
+      }
+    }
+    
+    // Sort by distance for optimal clustering
+    nearbyAppointments.sort((a, b) => a.distanceKm - b.distanceKm);
+    
+    return nearbyAppointments;
+    
+  } catch (error) {
+    console.error('❌ AI nearby appointments analysis failed:', error);
+    
+    // Fallback to traditional method
+    return await findNearbyAppointments(customerAddress, appointments);
+  }
+}
+
+/**
+ * AI-enhanced optimal slot calculation
+ */
+async function calculateOptimalSlotWithAI({ customerAddress, jobAnalysis, nearbyAppointments, existingAppointments, accessToken }) {
+  try {
+    // Get last appointment for travel calculation
+    const lastAppointment = await getLastAppointmentBeforeSlot(new Date(), existingAppointments, accessToken);
+    const startLocation = lastAppointment?.location || 'Brisbane CBD, QLD 4000, Australia';
+    
+    // AI-powered travel analysis
+    const travelAnalysis = await analyzeLocationDistance(startLocation, customerAddress);
+    
+    // AI-powered gap calculation
+    const previousJob = {
+      address: startLocation,
+      estimatedMinutes: 60, // Assume standard previous job
+      complexity: 'moderate',
+      issueType: 'standard'
+    };
+    
+    const upcomingJob = {
+      address: customerAddress,
+      priority: jobAnalysis.priority,
+      issueType: jobAnalysis.issueType
+    };
+    
+    const gapAnalysis = await calculateOptimalAppointmentGap(previousJob, upcomingJob, travelAnalysis);
+    
+    // Calculate start time
+    const lastEndTime = lastAppointment?.end || new Date();
+    const calculatedStartTime = new Date(lastEndTime.getTime() + (gapAnalysis.recommendedGapMinutes * 60000));
+    
+    // AI-powered time rounding
+    const timeRounding = await calculateSmartTimeRounding(calculatedStartTime, {}, {});
+    
+    // Calculate end time
+    const appointmentStart = timeRounding.recommendedTime;
+    const appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedDuration * 60000));
+    
+    return {
+      start: appointmentStart,
+      end: appointmentEnd,
+      estimatedDuration: jobAnalysis.estimatedDuration,
+      travelTime: `${travelAnalysis.estimatedTravelMinutes} minutes`,
+      totalBufferMinutes: gapAnalysis.recommendedGapMinutes,
+      priority: jobAnalysis.priority,
+      analysis: {
+        job: jobAnalysis,
+        travel: travelAnalysis,
+        gap: gapAnalysis,
+        timeRounding: timeRounding
+      },
+      type: 'ai_enhanced',
+      confidence: 'high'
+    };
+    
+  } catch (error) {
+    console.error('❌ AI-enhanced slot calculation failed:', error);
+    
+    // Fallback to traditional calculation
+    return await calculateOptimalSlotTraditional({ customerAddress, jobAnalysis, nearbyAppointments, existingAppointments, accessToken });
+  }
+}
+
+/**
+ * Traditional optimal slot calculation (fallback)
+ */
+async function calculateOptimalSlotTraditional({ customerAddress, jobAnalysis, nearbyAppointments, existingAppointments, accessToken }) {
   const now = new Date();
   const priority = PRIORITY_LEVELS[jobAnalysis.priority];
   
@@ -275,6 +525,21 @@ async function calculateOptimalSlot({ customerAddress, jobAnalysis, nearbyAppoin
   const fallbackResult = generateFallbackSlot(earliestStart, jobAnalysis, customerAddress);
   console.log(`⚠️ Fallback appointment time: ${fallbackResult.start.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane', hour: 'numeric', minute: '2-digit', hour12: true })}`);
   return fallbackResult;
+}
+
+/**
+ * Traditional nearby appointments finder (fallback)
+ */
+async function findNearbyAppointments(customerAddress, appointments) {
+  const nearbyAppointments = [];
+  
+  for (const appointment of appointments) {
+    if (appointment.location && isSimilarLocation(appointment.location, customerAddress)) {
+      nearbyAppointments.push(appointment);
+    }
+  }
+  
+  return nearbyAppointments;
 }
 
 /**
@@ -638,7 +903,8 @@ function generateFallbackSlot(earliestStart, jobAnalysis, customerAddress) {
 module.exports = {
   analyzeJobComplexity,
   findOptimalAppointmentSlot,
-  calculateOptimalSlot,
+  calculateOptimalSlotWithAI,
+  calculateOptimalSlotTraditional,
   PRIORITY_LEVELS,
   JOB_KNOWLEDGE_BASE
 };

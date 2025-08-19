@@ -232,13 +232,13 @@ Reference: ${appointment.reference}`,
  * Finds optimal appointment slot with enhanced fallback logic
  */
 /**
- * Find optimal appointment slot using AI-powered smart scheduling
+ * Find optimal appointment slot using enhanced AI-powered smart scheduling
  */
 async function findOptimalAppointmentSlot(customerAddress, issueDescription, customerData = {}, priority = 'standard') {
-  console.log('🧠 Using AI-powered smart scheduling...');
+  console.log('🚀 Using enhanced AI-powered smart scheduling...');
   
   try {
-    // Import smart scheduler
+    // Import the enhanced smart scheduler
     const { findOptimalAppointmentSlot: smartScheduler } = require('./smartScheduler');
     
     // Get access token for calendar integration
@@ -256,30 +256,51 @@ async function findOptimalAppointmentSlot(customerAddress, issueDescription, cus
         });
         const { credentials } = await oauth2Client.refreshAccessToken();
         accessToken = credentials.access_token;
-        console.log('Google Access Token acquired for smart scheduling');
+        console.log('Google Access Token acquired for AI-enhanced smart scheduling');
       }
     } catch (error) {
       console.log('📅 Google Calendar integration not available:', error.message);
     }
     
-    // Use smart scheduler to find optimal slot
-    const smartResult = await smartScheduler(customerAddress, issueDescription, customerData, accessToken);
+    // Enrich customer data with conversation context
+    const enrichedCustomerData = {
+      ...customerData,
+      conversationContext: `Customer called about: ${issueDescription}`,
+      priority: priority,
+      bookingTimestamp: new Date().toISOString()
+    };
+    
+    // Use enhanced AI-driven smart scheduler
+    const smartResult = await smartScheduler(customerAddress, issueDescription, enrichedCustomerData, accessToken);
     
     if (smartResult && smartResult.start) {
-      // Convert to appointment format with calendar integration
+      // Enhanced appointment object with AI analysis details
       const appointment = {
         start: smartResult.start,
         end: smartResult.end,
         reference: generateAppointmentReference(),
-        type: smartResult.type || 'smart_scheduled',
+        type: smartResult.type || 'ai_optimized',
         location: customerAddress,
         priority: smartResult.priority,
-        estimatedDuration: smartResult.estimatedDuration,
+        estimatedDuration: smartResult.estimatedDuration || smartResult.duration,
         travelTime: smartResult.travelTime,
         travelMinutes: smartResult.travelMinutes,
-        analysis: smartResult.analysis,
-        score: smartResult.score
+        totalBuffer: smartResult.totalBufferMinutes || smartResult.gap,
+        analysis: smartResult.analysis || {},
+        confidence: smartResult.confidence || 'high',
+        aiEnhanced: true
       };
+      
+      // Log AI analysis results
+      if (smartResult.analysis) {
+        console.log('🎯 AI Scheduling Analysis:', {
+          jobComplexity: smartResult.analysis.job?.complexity,
+          estimatedDuration: smartResult.analysis.job?.estimatedMinutes,
+          travelDistance: smartResult.analysis.travel?.distanceKm,
+          gapRecommendation: smartResult.analysis.gap?.recommendedGapMinutes,
+          timeRounding: smartResult.analysis.timeRounding?.roundingStrategy
+        });
+      }
       
       // Create calendar event if access token available
       if (accessToken) {
@@ -295,9 +316,9 @@ async function findOptimalAppointmentSlot(customerAddress, issueDescription, cus
             customerData?.specialInstructions
           );
           appointment.calendarEventId = calendarEventId;
-          console.log(`✅ Smart scheduled appointment with calendar event: ${calendarEventId}`);
+          console.log(`✅ AI-scheduled appointment with calendar event: ${calendarEventId}`);
         } catch (calendarError) {
-          console.log('⚠️ Calendar event creation failed:', calendarError.message);
+          console.log('⚠️ Calendar event creation failed, creating fallback record:', calendarError.message);
         }
       }
       
