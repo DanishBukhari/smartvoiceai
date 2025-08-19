@@ -23,13 +23,37 @@ async function sendBookingConfirmationEmail(bookingDetails) {
     const referenceNumber = bookingDetails.referenceNumber || `PLB-${Date.now().toString().slice(-6)}`;
 
     // Calculate and format travel time display
-    const travelMinutes = bookingDetails.travelMinutes || 0;
+    const travelMinutesInput = bookingDetails.travelMinutes || '20-30 minutes';
     const totalBufferMinutes = bookingDetails.totalBufferMinutes || 0;
+    const serviceDuration = bookingDetails.serviceDuration || 60;
     const jobCompletionBuffer = 30; // Standard 30-minute job completion buffer
     
+    // Extract numeric minutes from travel time (if it's a string)
+    function extractTravelMinutes(travelInput) {
+      if (typeof travelInput === 'number') return travelInput;
+      if (typeof travelInput === 'string') {
+        // Handle range format like "20-30 minutes"
+        const rangeMatch = travelInput.match(/(\d+)-(\d+)/);
+        if (rangeMatch) {
+          return Math.ceil((parseInt(rangeMatch[1]) + parseInt(rangeMatch[2])) / 2);
+        }
+        // Handle single number format like "25 minutes"
+        const singleMatch = travelInput.match(/(\d+)/);
+        if (singleMatch) {
+          return parseInt(singleMatch[1]);
+        }
+      }
+      return 25; // Default fallback
+    }
+    
+    const travelMinutes = extractTravelMinutes(travelMinutesInput);
+    
     // Format travel time for display
-    const formatTravelTime = (minutes) => {
-      if (minutes <= 0) return '30-45 minutes (estimated)';
+    const formatTravelTime = (travelInput) => {
+      if (typeof travelInput === 'string' && travelInput.includes('-')) {
+        return travelInput; // Keep original range format
+      }
+      const minutes = extractTravelMinutes(travelInput);
       if (minutes <= 15) return `${minutes} minutes`;
       if (minutes <= 30) return `${minutes} minutes`;
       if (minutes <= 60) return `${minutes} minutes`;
@@ -37,27 +61,42 @@ async function sendBookingConfirmationEmail(bookingDetails) {
     };
     
     // Format total time estimation
-    const formatTotalEstimation = (totalBuffer, jobBuffer, travelMins) => {
+    const formatTotalEstimation = (totalBuffer, serviceTime, travelMins) => {
       if (totalBuffer > 0 && travelMins > 0) {
-        return `${totalBuffer} minutes total (${jobBuffer} min service + ${travelMins} min travel)`;
+        return `${totalBuffer} minutes total (${serviceTime} min service + ${travelMins} min travel)`;
       }
-      return '1-2 hours (estimated)';
+      
+      // Use actual service time if available
+      if (serviceTime && serviceTime > 0) {
+        const hours = Math.round(serviceTime / 60 * 10) / 10; // Round to 1 decimal
+        if (hours <= 1) {
+          return `${serviceTime} minutes`;
+        } else if (hours <= 1.5) {
+          return `1-1.5 hours`;
+        } else if (hours <= 2) {
+          return `1.5-2 hours`;
+        } else {
+          return `${hours} hours`;
+        }
+      }
+      
+      return '1-2 hours'; // Fallback only when no service time available
     };
 
     // Prepare template parameters for the professional HTML template
     const templateParams = {
       // Customer Details
       customer_name: bookingDetails.customerName || 'Valued Customer',
-      customer_phone: bookingDetails.phone || 'Not provided',
+      customer_phone: bookingDetails.customerPhone || 'Not provided',
       to_email: bookingDetails.customerEmail,
-      customer_address: bookingDetails.address || 'Brisbane, QLD (Address to be confirmed)',
+      customer_address: bookingDetails.customerAddress || 'Brisbane, QLD (Address to be confirmed)',
       
       // Service Details
-      issue_description: bookingDetails.issue || 'General plumbing service',
-      estimated_duration: formatTotalEstimation(totalBufferMinutes, jobCompletionBuffer, travelMinutes),
-      travel_time: formatTravelTime(travelMinutes),
+      issue_description: bookingDetails.issueDescription || 'General plumbing service',
+      estimated_duration: formatTotalEstimation(totalBufferMinutes, serviceDuration, travelMinutes),
+      travel_time: formatTravelTime(travelMinutesInput),
       total_buffer_minutes: totalBufferMinutes > 0 ? `${totalBufferMinutes} minutes` : 'Calculating...',
-      job_completion_buffer: `${jobCompletionBuffer} minutes`,
+      job_completion_buffer: `${serviceDuration} minutes`,
       travel_time_minutes: travelMinutes > 0 ? `${travelMinutes} minutes` : 'Calculating...',
       
       // Appointment Details

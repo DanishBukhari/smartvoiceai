@@ -4,7 +4,7 @@ const express = require('express');
 const { VoiceResponse } = require('twilio').twiml;
 const WebSocket = require('ws');
 const { createClient, LiveTranscriptionEvents, LiveTTSEvents } = require('@deepgram/sdk');
-const { handleInput, stateMachine, terminateCall, setCallerPhoneNumber } = require('./flow');
+const { handleInput, stateMachine, terminateCall, setCallerPhoneNumber, resetStateMachine } = require('./flow');
 const { sendBookingConfirmationEmail } = require('./professional-email-service');
 const { OpenAI } = require('openai');
 const path = require('path');
@@ -64,7 +64,7 @@ app.post('/voice', (req, res) => {
   // Store caller info in stateMachine for later use
   if (from) {
     stateMachine.clientData.phone = from;
-    setCallerPhoneNumber(from); // Use the number they called (business number), not their number
+    setCallerPhoneNumber(from);
   }
   
   const connect = twiml.connect();
@@ -94,20 +94,8 @@ wss.on('connection', (ws) => {
   let customerSpeaking = false; // NEW: Track customer speaking state
   let lastAudioTime = 0; // NEW: Track last audio received
 
-  // Reset stateMachine
-  Object.assign(stateMachine, {
-    currentState: 'start',
-    conversationHistory: [],
-    clientData: {},
-    issueType: null,
-    questionIndex: 0,
-    nextSlot: null,
-    awaitingAddress: false,
-    awaitingTime: false,
-    bookingRetryCount: 0,
-    awaitingConfirmation: false, // NEW: Track when waiting for confirmation
-    pendingConfirmation: null, // NEW: Store what needs confirmation
-  });
+  // Reset stateMachine using the new modular reset function
+  resetStateMachine();
 
   // —— Deepgram streaming STT (ULTRA-OPTIMIZED FOR SPEED) ——
   const dgStt = deepgram.listen.live({
@@ -336,7 +324,11 @@ wss.on('connection', (ws) => {
         streamSid = msg.streamSid;
         console.log('Stream started:', streamSid);
         const greeting = 'Hello, this is Robyn from Assure Fix Plumbing. How can I help you today?';
-        try { stateMachine.conversationHistory.push({ role: 'assistant', content: greeting }); } catch (_) {}
+        try { 
+          stateMachine.conversationHistory.push({ role: 'assistant', content: greeting }); 
+        } catch (error) {
+          console.warn('Failed to add greeting to conversation history:', error);
+        }
         
         // Debug: Check Deepgram speak API availability
         console.log('Deepgram speak API check:', {
@@ -376,7 +368,7 @@ wss.on('connection', (ws) => {
     dgStt.finish();
     
     // Handle call termination cleanup
-    if (stateMachine.currentState !== 'call_ended') {
+    if (stateMachine.currentState !== 'ended') {
       console.log('📞 Call ended unexpectedly - performing cleanup');
       terminateCall('unexpected_disconnect');
     }

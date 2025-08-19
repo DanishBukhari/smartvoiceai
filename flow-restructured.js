@@ -9,40 +9,8 @@ const {
   handleGeneralQuery, 
   handleBookingComplete 
 } = require('./modules/conversationHandlers');
-const enhancedBookingFlow = require('./modules/enhancedBookingFlow');
-const travelOptimization = require('./modules/travelOptimization');
+const { handleDetailCollection, confirmSlot, collectSpecialInstructions } = require('./modules/bookingFlow');
 const { notifyError } = require('./notifications');
-
-/**
- * Check if input is a simple greeting or response vs complex issue description
- */
-function isSimpleGreetingOrResponse(input) {
-  const simple = input.trim().toLowerCase();
-  
-  // Single word responses
-  if (simple.split(' ').length <= 2) {
-    return true;
-  }
-  
-  // Pure greetings
-  const greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening'];
-  if (greetings.some(greeting => simple === greeting)) {
-    return true;
-  }
-  
-  // Simple yes/no responses
-  if (['yes', 'no', 'okay', 'ok', 'sure', 'yeah', 'nope'].includes(simple)) {
-    return true;
-  }
-  
-  // Complex issue descriptions (don't use quick response)
-  if (simple.includes('issue') || simple.includes('problem') || simple.includes('broken') ||
-      simple.includes('have a') || simple.includes('my ') || simple.length > 20) {
-    return false;
-  }
-  
-  return true;
-}
 
 // Global caches for performance optimization
 const responseCache = new Map();
@@ -85,10 +53,10 @@ async function handleInput(input, confidence = 1.0) {
     return "Go on...";
   }
   
-  // STEP 3: Quick response check for simple greetings only (not complex issue descriptions)
+  // STEP 3: Quick response check for common inputs (performance optimization)
   const quickResponse = getQuickResponse(input);
-  if (quickResponse && stateMachine.currentState === 'start' && isSimpleGreetingOrResponse(input)) {
-    console.log('⚡ Using quick response for simple greeting');
+  if (quickResponse && stateMachine.currentState === 'start') {
+    console.log('⚡ Using quick response');
     transitionTo('general', 'quick response triggered');
     addToHistory('user', input);
     addToHistory('assistant', quickResponse);
@@ -119,8 +87,8 @@ async function handleInput(input, confidence = 1.0) {
       return await handleDetailConfirmation(input);
     }
     
-    // PRIORITY 3: Emergency detection (highest priority) - but not if booking is complete
-    if (detectEmergency(input) && stateMachine.currentState !== 'urgent_booking' && stateMachine.currentState !== 'booking_complete') {
+    // PRIORITY 3: Emergency detection (highest priority)
+    if (detectEmergency(input) && stateMachine.currentState !== 'urgent_booking') {
       console.log('🚨 EMERGENCY DETECTED - redirecting to urgent flow');
       stateMachine.urgent = true;
       stateMachine.safetyConcern = true;
@@ -138,7 +106,6 @@ async function handleInput(input, confidence = 1.0) {
         // Issue diagnosis states
         case 'hot water system':
         case 'toilet':
-        case 'sink/tap':
         case 'burst/leak':
         case 'rain-pump':
         case 'roof leak':
@@ -149,17 +116,16 @@ async function handleInput(input, confidence = 1.0) {
           
         // Booking flow states
         case 'ask_booking':
-          const { handleBookingRequest } = require('./modules/enhancedBookingFlow');
+          const { handleBookingRequest } = require('./modules/bookingFlow');
           response = await handleBookingRequest(input);
           break;
           
         case 'collect_details':
-          const { handleDetailCollection } = require('./modules/enhancedBookingFlow');
           response = await handleDetailCollection(input);
           break;
           
         case 'book_appointment':
-          const { proceedToBooking } = require('./modules/enhancedBookingFlow');
+          const { proceedToBooking } = require('./modules/bookingFlow');
           response = await proceedToBooking();
           break;
           
@@ -231,14 +197,6 @@ async function handleUnknownState(input) {
       return await askNextQuestion('');
     }
     
-    if (analysis.issue?.includes('sink') || analysis.issue?.includes('tap') || analysis.issue?.includes('faucet')) {
-      console.log('🚿 Sink/tap issue detected');
-      stateMachine.issueType = 'sink/tap';
-      transitionTo('sink/tap', 'recovery - sink/tap detected');
-      stateMachine.questionIndex = 0;
-      return await askNextQuestion('');
-    }
-    
     if (analysis.issue?.includes('water')) {
       console.log('🔥 Hot water issue detected');
       stateMachine.issueType = 'hot water system';
@@ -271,18 +229,13 @@ async function handleUnknownState(input) {
       return "I understand you have a toilet issue. What's happening with your toilet?";
     }
     
-    if (lowerInput.includes('sink') || lowerInput.includes('tap') || lowerInput.includes('faucet')) {
-      transitionTo('sink/tap', 'pattern match - sink/tap');
-      return "I see you have a sink or tap issue. What's the problem - is it leaking, blocked, or no water coming out?";
-    }
-    
     if (lowerInput.includes('hot water') || lowerInput.includes('water heater')) {
       transitionTo('hot water system', 'pattern match - hot water');
       return "I see you have a hot water issue. Do you have any hot water at all?";
     }
     
     if (lowerInput.includes('book') || lowerInput.includes('appointment')) {
-      const { handleBookingRequest } = require('./modules/enhancedBookingFlow');
+      const { handleBookingRequest } = require('./modules/bookingFlow');
       transitionTo('ask_booking', 'pattern match - booking');
       return "I'd be happy to help you book an appointment. Could you first tell me what plumbing issue you need assistance with?";
     }
@@ -308,7 +261,7 @@ async function handleDetailConfirmation(input) {
       stateMachine.pendingConfirmation = null;
       
       // Continue with next step
-      const { handleDetailCollection } = require('./modules/enhancedBookingFlow');
+      const { handleDetailCollection } = require('./modules/bookingFlow');
       return await handleDetailCollection('');
     }
   } else {
@@ -404,40 +357,6 @@ async function handleTimeout() {
 }
 
 /**
- * Collect special instructions from customer
- */
-async function collectSpecialInstructions(input) {
-  console.log('📝 Collecting special instructions:', input);
-  
-  if (input.toLowerCase().includes('no') || input.toLowerCase().includes('nothing')) {
-    transitionTo('booking_complete');
-    return "Perfect! Your appointment has been confirmed. Is there anything else I can help you with?";
-  }
-  
-  // Store the instructions
-  if (!stateMachine.customerData) stateMachine.customerData = {};
-  stateMachine.customerData.specialInstructions = input;
-  
-  transitionTo('booking_complete');
-  return "Thank you for those details. I've noted your special instructions and your appointment is now confirmed. Is there anything else I can help you with?";
-}
-
-/**
- * Confirm appointment slot with customer
- */
-async function confirmSlot(input) {
-  console.log('✅ Confirming appointment slot:', input);
-  
-  if (input.toLowerCase().includes('yes') || input.toLowerCase().includes('confirm')) {
-    transitionTo('collect_special_instructions');
-    return "Excellent! Your appointment is confirmed. Do you have any special instructions for our plumber, such as gate access codes or specific areas to focus on?";
-  } else {
-    transitionTo('book_appointment');
-    return "No problem, let me find another time that works better for you. What day and time would you prefer?";
-  }
-}
-
-/**
  * Email confirmation verification
  */
 async function verifyEmailConfirmation(email, appointmentId) {
@@ -490,7 +409,7 @@ module.exports = {
   stateMachine, // For backward compatibility
   calculateTravelTime: require('./modules/travelOptimization').calculateTravelTime,
   calculateEmailTravelTime: require('./modules/travelOptimization').estimateBrisbaneTravelTime,
-  generatePhoneBasedReference: require('./modules/enhancedBookingFlow').generateAppointmentReference,
+  generatePhoneBasedReference: require('./modules/bookingFlow').generateAppointmentReference,
   extractNameFromInput: require('./modules/dataExtraction').extractNameFromInput,
   isValidName: require('./modules/dataExtraction').isValidName,
   extractMinutesFromTravelTime: require('./modules/travelOptimization').extractMinutesFromTravelTime,

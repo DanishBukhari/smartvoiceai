@@ -24,6 +24,12 @@ async function getAccessToken() {
 
 async function getLastAppointment(accessToken, beforeDate) {
   try {
+    // Validate beforeDate parameter
+    if (!beforeDate || !(beforeDate instanceof Date) || isNaN(beforeDate.getTime())) {
+      console.log('getLastAppointment: Invalid or missing beforeDate, using current time');
+      beforeDate = new Date();
+    }
+    
     const response = await calendar.events.list({
       calendarId,
       timeMax: beforeDate.toISOString(),
@@ -60,6 +66,12 @@ async function getLastAppointment(accessToken, beforeDate) {
 
 async function getNextAvailableSlot(accessToken, afterDate) {
   try {
+    // Validate afterDate parameter
+    if (!afterDate || !(afterDate instanceof Date) || isNaN(afterDate.getTime())) {
+      console.log('getNextAvailableSlot: Invalid or missing afterDate, using current time');
+      afterDate = new Date();
+    }
+    
     const response = await calendar.freebusy.query({
       resource: {
         timeMin: afterDate.toISOString(),
@@ -69,25 +81,51 @@ async function getNextAvailableSlot(accessToken, afterDate) {
     });
     const busy = response.data.calendars[calendarId].busy;
     if (busy.length === 0) {
-      return afterDate;
+      return {
+        start: afterDate,
+        end: new Date(afterDate.getTime() + 60 * 60 * 1000) // 1 hour appointment
+      };
     }
     let currentTime = afterDate;
     for (const interval of busy) {
       const intervalStart = new Date(interval.start);
       if (currentTime < intervalStart) {
-        return currentTime;
+        return {
+          start: currentTime,
+          end: new Date(currentTime.getTime() + 60 * 60 * 1000) // 1 hour appointment
+        };
       }
       currentTime = new Date(interval.end);
     }
-    return currentTime;
+    return {
+      start: currentTime,
+      end: new Date(currentTime.getTime() + 60 * 60 * 1000) // 1 hour appointment
+    };
   } catch (error) {
     console.error('getNextAvailableSlot: Error', error.message, error.stack);
-    return null;
+    // Return a fallback slot for tomorrow at 9 AM
+    const fallbackDate = new Date();
+    fallbackDate.setDate(fallbackDate.getDate() + 1);
+    fallbackDate.setHours(9, 0, 0, 0);
+    return {
+      start: fallbackDate,
+      end: new Date(fallbackDate.getTime() + 60 * 60 * 1000)
+    };
   }
 }
 
 async function isSlotFree(accessToken, start, end) {
   try {
+    // Validate start and end parameters
+    if (!start || !(start instanceof Date) || isNaN(start.getTime())) {
+      console.log('isSlotFree: Invalid start date, returning false');
+      return false;
+    }
+    if (!end || !(end instanceof Date) || isNaN(end.getTime())) {
+      console.log('isSlotFree: Invalid end date, returning false');
+      return false;
+    }
+    
     const response = await calendar.freebusy.query({
       resource: {
         timeMin: start.toISOString(),
@@ -107,6 +145,27 @@ async function createAppointment(accessToken, eventDetails) {
   try {
     console.log('🔗 Attempting to create appointment via Google Calendar API...');
     console.log('📊 Network test: Checking connectivity to googleapis.com');
+    
+    // Validate that event has both start and end times
+    if (!eventDetails.start || !eventDetails.end) {
+      console.error('createAppointment: Error Missing start or end time.');
+      
+      // Auto-generate end time if missing but start is available
+      if (eventDetails.start && !eventDetails.end) {
+        const startTime = new Date(eventDetails.start.dateTime);
+        const endTime = new Date(startTime);
+        endTime.setHours(endTime.getHours() + 1); // Default 1 hour appointment
+        
+        eventDetails.end = {
+          dateTime: endTime.toISOString(),
+          timeZone: eventDetails.start.timeZone || 'Australia/Brisbane'
+        };
+        
+        console.log('📅 Auto-generated end time:', eventDetails.end.dateTime);
+      } else {
+        throw new Error('Missing start and/or end time.');
+      }
+    }
     
     const response = await calendar.events.insert({
       calendarId,
