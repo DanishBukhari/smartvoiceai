@@ -1,5 +1,6 @@
 // modules/inputValidation.js - Input validation and transcription error correction
 const { getResponse } = require('../nlp');
+const { correctSpeechWithContext, applyBasicCorrections } = require('./speechCorrection');
 
 // Fast response patterns for common inputs
 const quickResponses = {
@@ -21,14 +22,13 @@ const quickResponses = {
 
 function validateAndCorrectInput(input) {
   if (!input || typeof input !== 'string') return input;
-  let corrected = input.trim();
+  
+  // First apply speech recognition corrections
+  let corrected = applyBasicCorrections(input.trim());
   
   // Fix specific email patterns with numbers
   corrected = corrected
-    .replace(/\bf\s*y\s*e\s*d\s*a\s*h\s*i\s*r\s*a\s*(\d+)\s*@/gi, 'fyedahira$1@')
-    .replace(/\bs\s*y\s*e\s*d\s*a\s*h\s*i\s*r\s*a\s*(\d+)\s*@/gi, 'syedahira$1@')
-    .replace(/(\d+)six\.@/gi, '$1@')
-    .replace(/six\.@/gi, '@');
+    
   
   // Handle spaced letters in names (but not in email addresses)
   const parts = corrected.split('@');

@@ -241,13 +241,13 @@ wss.on('connection', (ws) => {
         ttsInFlight = true;
         botIsSpeaking = true; // Mark bot as about to speak
         
-        // SAFETY: Reset botIsSpeaking flag after 30 seconds if it gets stuck
+        // SAFETY: Reset botIsSpeaking flag after 15 seconds if it gets stuck
         const speakingTimeout = setTimeout(() => {
           if (botIsSpeaking) {
             console.warn('⚠️  SAFETY: Resetting stuck botIsSpeaking flag after timeout');
             botIsSpeaking = false;
           }
-        }, 30000);
+        }, 15000); // Reduced from 30 to 15 seconds
         
         // LATENCY OPTIMIZATION: Process in parallel with minimal awaits
         try {

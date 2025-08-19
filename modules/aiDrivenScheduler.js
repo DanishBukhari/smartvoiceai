@@ -151,23 +151,33 @@ Guidelines:
       max_tokens: 400
     });
 
-    const analysis = JSON.parse(response.choices[0].message.content);
-    console.log('🗺️ AI Location Analysis:', {
-      distance: `${analysis.distanceKm}km`,
-      travel: `${analysis.estimatedTravelMinutes} minutes`,
-      range: `${analysis.minTravelMinutes}-${analysis.maxTravelMinutes}`,
-      route: analysis.routeType
-    });
+    let analysis;
+    try {
+      analysis = JSON.parse(response.choices[0].message.content);
+    } catch (parseError) {
+      console.error('❌ Failed to parse AI response, using fallback:', parseError);
+      analysis = getBrisbaneFallbackTravel(originAddress, destinationAddress);
+    }
     
-    return {
-      distanceKm: analysis.distanceKm || 20,
+    // Ensure all values are properly defined
+    const result = {
+      distanceKm: analysis.distanceKm || 15,
       estimatedTravelMinutes: analysis.estimatedTravelMinutes || 25,
       minTravelMinutes: analysis.minTravelMinutes || 20,
       maxTravelMinutes: analysis.maxTravelMinutes || 35,
       routeType: analysis.routeType || 'mixed',
-      trafficConcerns: analysis.trafficConcerns || '',
+      trafficConcerns: analysis.trafficConcerns || 'Standard Brisbane traffic',
       reasoning: analysis.reasoning || 'Standard Brisbane estimate'
     };
+    
+    console.log('🗺️ AI Location Analysis:', {
+      distance: `${result.distanceKm}km`,
+      travel: `${result.estimatedTravelMinutes} minutes`,
+      range: `${result.minTravelMinutes}-${result.maxTravelMinutes}`,
+      route: result.routeType
+    });
+    
+    return result;
     
   } catch (error) {
     console.error('❌ AI location analysis failed:', error);
@@ -187,10 +197,53 @@ Guidelines:
         reasoning: 'Google Maps API fallback'
       };
     } catch (googleError) {
+      console.log('⚠️ Google Maps API also failed, using Brisbane fallback');
       // Final fallback
-      return getIntelligentFallbackDistance(originAddress, destinationAddress);
+      return getBrisbaneFallbackTravel(originAddress, destinationAddress);
     }
   }
+}
+
+/**
+ * Brisbane-specific fallback travel estimates
+ */
+function getBrisbaneFallbackTravel(originAddress, destinationAddress) {
+  // Analyze addresses for Brisbane-specific patterns
+  const origin = (originAddress || '').toLowerCase();
+  const dest = (destinationAddress || '').toLowerCase();
+  
+  // Brisbane CBD areas
+  const cbdAreas = ['adelaide', 'queen', 'george', 'elizabeth', 'edward', 'albert', 'charlotte', 'creek'];
+  const isOriginCBD = cbdAreas.some(area => origin.includes(area));
+  const isDestCBD = cbdAreas.some(area => dest.includes(area));
+  
+  // Determine travel estimate based on location types
+  let baseMinutes = 25;
+  let distance = 15;
+  
+  if (isOriginCBD && isDestCBD) {
+    // CBD to CBD
+    baseMinutes = 15;
+    distance = 8;
+  } else if (isOriginCBD || isDestCBD) {
+    // CBD to suburb or vice versa
+    baseMinutes = 25;
+    distance = 18;
+  } else {
+    // Suburb to suburb
+    baseMinutes = 30;
+    distance = 22;
+  }
+  
+  return {
+    distanceKm: distance,
+    estimatedTravelMinutes: baseMinutes,
+    minTravelMinutes: Math.max(10, baseMinutes - 10),
+    maxTravelMinutes: baseMinutes + 15,
+    routeType: 'mixed',
+    trafficConcerns: 'Brisbane standard traffic patterns',
+    reasoning: `Brisbane geographic fallback: ${isOriginCBD ? 'CBD' : 'suburb'} to ${isDestCBD ? 'CBD' : 'suburb'}`
+  };
 }
 
 /**
@@ -312,17 +365,23 @@ OPTIMIZATION CRITERIA:
 4. Same-day vs next-day considerations
 5. Peak hour considerations (avoid rush hours when possible)
 
-STANDARD APPOINTMENT SLOTS:
-- 8:00 AM, 8:30 AM, 9:00 AM, 9:30 AM, 10:00 AM, 10:30 AM, 11:00 AM, 11:30 AM
-- 12:00 PM, 12:30 PM, 1:00 PM, 1:30 PM, 2:00 PM, 2:30 PM, 3:00 PM, 3:30 PM, 4:00 PM
+STANDARD APPOINTMENT SLOTS (BUSINESS HOURS 8AM-5PM):
+- Morning: 8:00 AM, 8:30 AM, 9:00 AM, 9:30 AM, 10:00 AM, 10:30 AM, 11:00 AM, 11:30 AM
+- Afternoon: 12:00 PM, 12:30 PM, 1:00 PM, 1:30 PM, 2:00 PM, 2:30 PM, 3:00 PM, 3:30 PM, 4:00 PM, 4:30 PM
+
+BUSINESS RULES:
+- Operating hours: 8:00 AM to 5:00 PM Monday-Friday
+- Avoid lunch hour: 12:00 PM to 1:00 PM for complex jobs
+- Emergency appointments can be outside hours but prefer standard slots
+- Same-day preferred if before 3:00 PM, otherwise next business day
 
 RESPOND IN JSON FORMAT:
 {
-  "recommendedTime": "ISO datetime string",
+  "recommendedTime": "ISO datetime string (MUST be within business hours 8AM-5PM)",
   "roundingStrategy": "round_up|round_down|nearest_slot",
-  "slotInterval": number (minutes between slots - typically 30),
-  "businessDayAdjustment": "same_day|next_business_day|specific_day",
-  "reasoning": "explanation of time selection"
+  "slotInterval": 30,
+  "businessDayAdjustment": "same_day|next_business_day",
+  "reasoning": "explanation of time selection with business hours consideration"
 }
 
 Professional guidelines:
@@ -340,30 +399,99 @@ Professional guidelines:
       max_tokens: 400
     });
 
-    const analysis = JSON.parse(response.choices[0].message.content);
-    const recommendedTime = new Date(analysis.recommendedTime);
+    let analysis;
+    try {
+      analysis = JSON.parse(response.choices[0].message.content);
+    } catch (parseError) {
+      console.error('❌ Failed to parse AI time rounding response, using fallback');
+      analysis = {};
+    }
+
+    // Validate and fix business hours
+    let recommendedTime = analysis.recommendedTime ? new Date(analysis.recommendedTime) : calculatedTime;
+    recommendedTime = ensureBusinessHours(recommendedTime);
     
     console.log('🕐 AI Time Rounding:', {
       original: calculatedTime.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' }),
       recommended: recommendedTime.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' }),
-      strategy: analysis.roundingStrategy,
-      reasoning: analysis.reasoning
+      strategy: analysis.roundingStrategy || 'business_hours_corrected',
+      reasoning: analysis.reasoning || 'Corrected to business hours (8AM-5PM)'
     });
     
     return {
       recommendedTime,
       roundingStrategy: analysis.roundingStrategy || 'nearest_slot',
-      slotInterval: analysis.slotInterval || 30,
+      slotInterval: 30,
       businessDayAdjustment: analysis.businessDayAdjustment || 'same_day',
-      reasoning: analysis.reasoning || 'Standard 30-minute slot rounding'
+      reasoning: analysis.reasoning || 'Business hours validated appointment time'
     };
     
   } catch (error) {
     console.error('❌ AI time rounding failed:', error);
     
-    // Intelligent fallback
+    // Intelligent fallback with business hours
     return getIntelligentTimeRounding(calculatedTime);
   }
+}
+
+/**
+ * Ensure appointment time is within business hours (8AM-5PM)
+ */
+function ensureBusinessHours(dateTime) {
+  const brisbaneTZ = 'Australia/Brisbane';
+  const date = new Date(dateTime);
+  
+  // Get Brisbane time components
+  const brisbaneTime = new Date(date.toLocaleString('en-US', { timeZone: brisbaneTZ }));
+  const hours = brisbaneTime.getHours();
+  const minutes = brisbaneTime.getMinutes();
+  
+  // Check if within business hours (8AM-5PM)
+  if (hours < 8) {
+    // Too early - set to 8:00 AM
+    brisbaneTime.setHours(8, 0, 0, 0);
+  } else if (hours >= 17) {
+    // Too late - set to next business day 8:00 AM
+    brisbaneTime.setDate(brisbaneTime.getDate() + 1);
+    brisbaneTime.setHours(8, 0, 0, 0);
+  } else if (hours === 16 && minutes > 30) {
+    // After 4:30 PM - set to next business day 8:00 AM
+    brisbaneTime.setDate(brisbaneTime.getDate() + 1);
+    brisbaneTime.setHours(8, 0, 0, 0);
+  } else {
+    // Round to nearest 30-minute slot
+    const roundedMinutes = Math.round(minutes / 30) * 30;
+    if (roundedMinutes === 60) {
+      brisbaneTime.setHours(hours + 1, 0, 0, 0);
+    } else {
+      brisbaneTime.setMinutes(roundedMinutes, 0, 0);
+    }
+  }
+  
+  // Skip weekends
+  const dayOfWeek = brisbaneTime.getDay();
+  if (dayOfWeek === 0) { // Sunday
+    brisbaneTime.setDate(brisbaneTime.getDate() + 1); // Monday
+  } else if (dayOfWeek === 6) { // Saturday
+    brisbaneTime.setDate(brisbaneTime.getDate() + 2); // Monday
+  }
+  
+  return brisbaneTime;
+}
+
+/**
+ * Intelligent time rounding fallback
+ */
+function getIntelligentTimeRounding(calculatedTime) {
+  const businessTime = ensureBusinessHours(calculatedTime);
+  
+  return {
+    recommendedTime: businessTime,
+    roundingStrategy: 'business_hours_fallback',
+    slotInterval: 30,
+    businessDayAdjustment: 'business_hours_corrected',
+    reasoning: 'Fallback to business hours with 30-minute slots (8AM-5PM)'
+  };
 }
 
 /**
@@ -395,9 +523,16 @@ async function scheduleAppointmentWithAI(customerData, issueDescription, previou
       travelAnalysis
     );
     
-    // Step 5: Calculate initial appointment time
-    const lastEndTime = lastAppointment.endTime || new Date();
-    const calculatedStartTime = new Date(lastEndTime.getTime() + (gapAnalysis.recommendedGapMinutes * 60000));
+    // Step 5: Calculate initial appointment time with business hours validation
+    let baseTime;
+    if (lastAppointment.endTime) {
+      baseTime = new Date(lastAppointment.endTime);
+    } else {
+      // No previous appointment - start with next available business slot
+      baseTime = getNextBusinessSlot();
+    }
+    
+    const calculatedStartTime = new Date(baseTime.getTime() + (gapAnalysis.recommendedGapMinutes * 60000));
     
     // Step 6: AI time rounding for professional scheduling
     const timeRounding = await calculateSmartTimeRounding(calculatedStartTime, customerData.preferences);
@@ -434,6 +569,31 @@ async function scheduleAppointmentWithAI(customerData, issueDescription, previou
   } catch (error) {
     console.error('❌ Comprehensive AI scheduling failed:', error);
     throw new Error(`AI scheduling failed: ${error.message}`);
+  }
+}
+
+/**
+ * Get the next available business slot (today if before 3PM, otherwise tomorrow)
+ */
+function getNextBusinessSlot() {
+  const now = new Date();
+  const brisbaneTZ = 'Australia/Brisbane';
+  const brisbaneNow = new Date(now.toLocaleString('en-US', { timeZone: brisbaneTZ }));
+  
+  // Check if it's currently business hours and not too late for same-day booking
+  const currentHour = brisbaneNow.getHours();
+  
+  if (currentHour >= 8 && currentHour < 15) {
+    // Current time is between 8AM-3PM, can schedule for later today
+    const nextSlot = new Date(brisbaneNow);
+    nextSlot.setHours(currentHour + 1, 0, 0, 0); // Next hour, on the hour
+    return ensureBusinessHours(nextSlot);
+  } else {
+    // Too late for today, schedule for tomorrow morning
+    const tomorrow = new Date(brisbaneNow);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(8, 0, 0, 0); // 8 AM tomorrow
+    return ensureBusinessHours(tomorrow);
   }
 }
 
