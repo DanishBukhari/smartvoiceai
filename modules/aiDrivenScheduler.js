@@ -62,7 +62,7 @@ Example estimates for reference:
 `;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini", 
       messages: [{ role: "user", content: prompt }],
       temperature: 0.2, // Lower temperature for more consistent estimates
       max_tokens: 600
@@ -145,7 +145,7 @@ Guidelines:
 `;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.2,
       max_tokens: 400
@@ -299,7 +299,7 @@ Professional standards:
 `;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 500
