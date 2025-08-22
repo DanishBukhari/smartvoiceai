@@ -749,6 +749,14 @@ async function handleDetailCollection(userInput) {
   const existingData = stateMachine.customerData || {};
   const extractedData = extractDataFromInput(userInput, existingData);
   
+  // Handle incomplete address
+  if (extractedData.incompleteAddress && !extractedData.address) {
+    const { suggestAddressCompletion } = require('./addressValidator');
+    const missing = suggestAddressCompletion(extractedData.incompleteAddress);
+    
+    return `I have "${extractedData.incompleteAddress}" but I need the complete address. Could you please provide the ${missing.join(' and ')}?`;
+  }
+  
   // Update customer data using proper synchronization function
   if (extractedData && Object.keys(extractedData).length > 0) {
     updateCustomerData(extractedData);
@@ -833,6 +841,8 @@ function extractDataFromInput(input, currentCustomerData = {}) {
   
   // Extract address (only if no email detected and contains proper address indicators)
   if (!data.email && !input.includes('@')) {
+    const { parseAddress, isCompleteAddress } = require('./addressValidator');
+    
     const addressPatterns = [
       /(?:the )?(?:full )?address is\s+(.+)/i,  // "The full address is ..."
       /(\d+[^@,]+(?:street|st|avenue|ave|road|rd|drive|dr|lane|ln|court|ct|place|pl)[^@,]*(?:,\s*[^@,]+)*)/i,
@@ -844,10 +854,19 @@ function extractDataFromInput(input, currentCustomerData = {}) {
     for (const pattern of addressPatterns) {
       const match = input.match(pattern);
       if (match && match[1]) {
-        const potentialAddress = match[1].trim();
+        const potentialAddress = parseAddress(match[1].trim());
         // Make sure it's not an email domain and has proper address characteristics
         if (!potentialAddress.includes('@') && potentialAddress.length > 5 &&
             (/\d/.test(potentialAddress) || /street|st|avenue|ave|road|rd|drive|dr|qld|nsw|vic|act|sa|wa|nt/i.test(potentialAddress))) {
+          
+          // Check if address is complete enough
+          if (isCompleteAddress(potentialAddress)) {
+            data.address = potentialAddress;
+            console.log('🏠 Complete address extracted:', data.address);
+          } else {
+            data.incompleteAddress = potentialAddress;
+            console.log('🏠 Incomplete address detected:', data.incompleteAddress);
+          }
           data.address = potentialAddress;
           console.log('🏠 Address extracted:', data.address);
           break;

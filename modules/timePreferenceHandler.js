@@ -13,6 +13,12 @@ async function findAvailableSlots(timePreference, customerData = {}) {
     const preference = parseTimePreference(timePreference);
     console.log('📅 Parsed preference:', preference);
     
+    // Check if preference is too vague and needs clarification
+    if (isPreferenceVague(preference, timePreference)) {
+      console.log('❓ Preference too vague, needs clarification');
+      return { needsClarification: true, preference };
+    }
+    
     // Get existing appointments to check availability
     const { getExistingAppointments } = require('./smartScheduler');
     const existingAppointments = await getExistingAppointments();
@@ -27,12 +33,19 @@ async function findAvailableSlots(timePreference, customerData = {}) {
     const sortedSlots = sortSlotsByPreference(availableSlots, preference);
     
     console.log(`✅ Found ${sortedSlots.length} available slots`);
-    return sortedSlots.slice(0, 3); // Return top 3 options
+    return { 
+      slots: sortedSlots.slice(0, 3), // Return top 3 options
+      preference,
+      needsClarification: false 
+    };
     
   } catch (error) {
     console.error('Error finding available slots:', error);
     // Return fallback slots
-    return generateFallbackSlots();
+    return { 
+      slots: generateFallbackSlots(), 
+      needsClarification: false 
+    };
   }
 }
 
@@ -89,6 +102,30 @@ function parseTimePreference(input) {
 }
 
 /**
+ * Check if the preference is too vague and needs clarification
+ */
+function isPreferenceVague(preference, originalInput) {
+  const inputLower = originalInput.toLowerCase().trim();
+  
+  // Very short responses that don't provide useful info
+  if (inputLower.length < 5) return true;
+  
+  // Generic responses that don't specify preference
+  const vagueResponses = [
+    'i would like', 'i want', 'i prefer', 'i need', 'maybe', 'not sure',
+    'anytime', 'whenever', 'flexible', 'doesn\'t matter'
+  ];
+  
+  const isVague = vagueResponses.some(vague => inputLower.includes(vague));
+  
+  // If no specific time preference was detected
+  const hasNoTimeInfo = !preference.timeOfDay && !preference.dayPreference && 
+                       !preference.specificTime && preference.flexibleDays.length === 0;
+  
+  return isVague || hasNoTimeInfo;
+}
+
+/**
  * Generate time slots based on preference
  */
 function generateTimeSlots(preference) {
@@ -137,9 +174,9 @@ function generateTimeSlots(preference) {
 function generateDayTimeSlots(date, preference) {
   const slots = [];
   const workingHours = {
-    morning: [8, 9, 10, 11],
-    afternoon: [13, 14, 15, 16],
-    evening: [17, 18]
+    morning: [9, 10, 11],          // 9am-12pm 
+    afternoon: [13, 14, 15, 16],   // 1pm-5pm (FIXED: was including evening)
+    evening: [17, 18, 19]          // 5pm-8pm (FIXED: proper evening hours)
   };
   
   let hoursToGenerate = [];
@@ -148,21 +185,39 @@ function generateDayTimeSlots(date, preference) {
     hoursToGenerate = workingHours.morning;
   } else if (preference.timeOfDay === 'afternoon') {
     hoursToGenerate = workingHours.afternoon;
+    console.log('🕐 Generating AFTERNOON slots for hours:', hoursToGenerate);
   } else if (preference.timeOfDay === 'evening') {
     hoursToGenerate = workingHours.evening;
   } else {
-    // No specific preference, offer all times
-    hoursToGenerate = [...workingHours.morning, ...workingHours.afternoon, ...workingHours.evening];
+    // No specific preference, offer all times but prioritize morning/afternoon
+    hoursToGenerate = [...workingHours.morning, ...workingHours.afternoon];
+  }
+  
+  // CRITICAL FIX: For tomorrow preference, ensure we're generating for tomorrow IN BRISBANE TIME
+  let targetDate;
+  if (preference.dayPreference === 'tomorrow') {
+    // Create date in Brisbane timezone
+    const now = new Date();
+    const brisbaneTime = new Date(now.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
+    targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate() + 1);
+    console.log('📅 Generating slots for TOMORROW:', targetDate.toDateString());
+    date = targetDate;
+  } else {
+    // Use the provided date, but ensure it's in Brisbane context
+    const brisbaneTime = new Date(date.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
+    targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate());
+    date = targetDate;
   }
   
   hoursToGenerate.forEach(hour => {
-    // Generate slots at 00 and 30 minutes
+    // Generate slots at 00 and 30 minutes - CRITICAL FIX: Create in Brisbane timezone
     [0, 30].forEach(minute => {
-      const startTime = new Date(date);
-      startTime.setHours(hour, minute, 0, 0);
+      // Create the date object properly in Brisbane timezone
+      // Brisbane is UTC+10, so we need to create the date correctly
+      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+10:00`;
+      const startTime = new Date(dateStr);
       
-      const endTime = new Date(startTime);
-      endTime.setHours(endTime.getHours() + 1, endTime.getMinutes() + 15); // 1h 15m default duration
+      const endTime = new Date(startTime.getTime() + 75 * 60000); // 1h 15m default duration
       
       slots.push({
         start: startTime,
@@ -260,5 +315,6 @@ module.exports = {
   parseTimePreference,
   generateTimeSlots,
   filterAvailableSlots,
-  sortSlotsByPreference
+  sortSlotsByPreference,
+  isPreferenceVague
 };

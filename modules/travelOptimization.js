@@ -39,26 +39,20 @@ async function calculateTravelTime(origin, destination) {
     
     const data = await response.json();
     
-    // Check for API errors
-    if (data.error_message) {
-      console.log(`🗺️ Google Maps API error: ${data.error_message}`);
+    // Check for API errors or request denied
+    if (data.error_message || data.status === 'REQUEST_DENIED') {
+      const errorMsg = data.error_message || 'API request denied';
+      console.log(`🗺️ Google Maps API error: ${errorMsg}`);
       
-      // If it's a billing error, fall back to Brisbane estimates
-      if (data.error_message.includes('billing') || data.error_message.includes('Billing')) {
-        console.log('💳 Google Maps API billing not enabled, using Brisbane estimates');
+      // If it's a billing error or request denied, fall back to Brisbane estimates
+      if (errorMsg.includes('billing') || errorMsg.includes('Billing') || data.status === 'REQUEST_DENIED') {
+        console.log('💳 Google Maps API billing not enabled or access denied, using Brisbane estimates');
         const fallbackTime = estimateBrisbaneTravelTime(origin, destination);
         console.log(`🚗 Using Brisbane geographic estimate: ${fallbackTime}`);
         return fallbackTime;
       }
       
-      throw new Error(`Google Maps API error: ${data.status}`);
-    }
-    
-    if (data.status === 'REQUEST_DENIED') {
-      console.log('🗺️ Google Maps API request denied (likely billing issue), using Brisbane estimates');
-      const fallbackTime = estimateBrisbaneTravelTime(origin, destination);
-      console.log(`🚗 Using Brisbane geographic estimate: ${fallbackTime}`);
-      return fallbackTime;
+      throw new Error(`Google Maps API error: ${errorMsg}`);
     }
     
     if (data.status === 'OK' && data.rows[0]?.elements[0]?.status === 'OK') {

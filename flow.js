@@ -71,10 +71,12 @@ async function handleInput(input, confidence = 1.0) {
   console.log('🔄 Current State:', stateMachine.currentState);
   console.log('📊 Client Data:', Object.keys(stateMachine.clientData));
   
-  // STEP 1: Input validation and correction
+  // STEP 1: Enhanced speech recognition with context
   if (input && typeof input === 'string') {
-    input = validateAndCorrectInput(input);
-    console.log('✅ Corrected input:', input);
+    const { enhanceSpeechRecognition, getConversationContext } = require('./modules/speechRecognitionEnhancer');
+    const context = getConversationContext(stateMachine);
+    input = enhanceSpeechRecognition(input, context);
+    console.log('✅ Enhanced input:', input);
   }
   
   // STEP 2: Confidence and completeness check
@@ -427,7 +429,15 @@ async function collectTimePreference(input) {
   const { findAvailableSlots } = require('./modules/timePreferenceHandler');
   
   try {
-    const availableSlots = await findAvailableSlots(input, stateMachine.customerData);
+    const result = await findAvailableSlots(input, stateMachine.customerData);
+    
+    // Check if we need clarification first
+    if (result.needsClarification) {
+      console.log('❓ Need clarification for vague preference');
+      return "I'd like to find the best time for you. Could you be more specific? For example, would you prefer morning (9am-12pm), afternoon (12pm-5pm), or evening (5pm-8pm)? And would today, tomorrow, or later this week work better?";
+    }
+    
+    const availableSlots = result.slots || result; // Handle both new and old format
     
     if (availableSlots && availableSlots.length > 0) {
       // Offer the best available slot
@@ -468,21 +478,58 @@ async function collectTimePreference(input) {
 async function confirmTimeSlot(input) {
   console.log('✅ Confirming time slot:', input);
   
-  const confirmationWords = ['yes', 'yeah', 'okay', 'ok', 'sure', 'perfect', 'good', 'fine', 'works', 'confirm'];
-  const rejectionWords = ['no', 'not', 'different', 'another', 'else', 'later', 'earlier'];
+  const confirmationWords = ['yes', 'yeah', 'okay', 'ok', 'sure', 'perfect', 'good', 'fine', 'works', 'confirm', 'alright', 'great', 'sounds good'];
+  const rejectionWords = ['no', 'not', 'different', 'another', 'else'];
   
-  const inputLower = input.toLowerCase();
-  const isConfirming = confirmationWords.some(word => inputLower.includes(word));
-  const isRejecting = rejectionWords.some(word => inputLower.includes(word));
+  const inputLower = input.toLowerCase().trim();
+  
+  // CRITICAL FIX: Check if customer is giving a new time preference instead of confirming/rejecting
+  const isGivingNewPreference = inputLower.includes('prefer') || 
+                               inputLower.includes('tomorrow') || 
+                               inputLower.includes('morning') || 
+                               inputLower.includes('afternoon') || 
+                               inputLower.includes('evening') ||
+                               inputLower.includes('later') ||
+                               inputLower.includes('earlier');
+  
+  // If they're giving a new preference, treat it as such rather than rejection
+  if (isGivingNewPreference && !confirmationWords.some(word => inputLower.includes(word))) {
+    console.log('🔄 Customer provided new time preference, redirecting to time collection');
+    transitionTo('collect_time_preference');
+    return await collectTimePreference(input);
+  }
+  
+  // CRITICAL FIX: Better confirmation detection
+  const isConfirming = confirmationWords.some(word => inputLower.includes(word)) || 
+                      inputLower === 'alright' || inputLower === 'alright.' ||
+                      inputLower.startsWith('that works') || inputLower.startsWith('that sounds');
+  
+  // CRITICAL FIX: Only treat as rejection if explicit rejection words
+  const isRejecting = rejectionWords.some(word => inputLower.includes(word)) && 
+                     !inputLower.includes('that works') && 
+                     !inputLower.includes('sounds good');
+  
+  console.log(`🔍 Confirmation analysis: confirming=${isConfirming}, rejecting=${isRejecting}, newPreference=${isGivingNewPreference}, input="${inputLower}"`);
   
   if (isConfirming && !isRejecting) {
+    console.log('✅ Customer CONFIRMED the time slot');
     // Customer confirmed the time, proceed to booking
     const { proceedToBookingWithSlot } = require('./modules/enhancedBookingFlow');
     return await proceedToBookingWithSlot(stateMachine.recommendedSlot);
-  } else {
-    // Customer wants a different time
+  } else if (isRejecting) {
+    console.log('❌ Customer REJECTED the time slot');
+    // Customer explicitly rejected, offer alternatives
     transitionTo('collect_time_preference');
-    return "No problem! What day and time would work better for you? I can check morning or afternoon appointments, and we have availability this week and next week.";
+    
+    // Provide specific options to avoid looping
+    return "I understand that time doesn't work for you. Let me offer some alternatives:\n" +
+           "• Tomorrow morning (9am-12pm)\n" +
+           "• Tomorrow afternoon (1pm-5pm)\n" +
+           "• This weekend\n" +
+           "Which of these would suit you better?";
+  } else {
+    console.log('❓ Customer response unclear, asking for clarification');
+    return "I want to make sure I get the right time for you. Would you like to book the suggested time, or would you prefer a different time?";
   }
 }
 
