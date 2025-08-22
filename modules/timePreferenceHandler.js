@@ -33,11 +33,21 @@ async function findAvailableSlots(timePreference, customerData = {}) {
     const sortedSlots = sortSlotsByPreference(availableSlots, preference);
     
     console.log(`✅ Found ${sortedSlots.length} available slots`);
-    return { 
+    
+    // CRITICAL FIX: Return specific time request information for better customer communication
+    const result = { 
       slots: sortedSlots.slice(0, 3), // Return top 3 options
       preference,
       needsClarification: false 
     };
+    
+    // Include specific time request info if customer requested a specific time
+    if (preference.specificTime) {
+      result.requestedSpecificTime = preference.specificTime;
+      console.log(`🎯 Customer requested specific time: ${preference.specificTime.hour}:${preference.specificTime.minute.toString().padStart(2, '0')}`);
+    }
+    
+    return result;
     
   } catch (error) {
     console.error('Error finding available slots:', error);
@@ -50,7 +60,7 @@ async function findAvailableSlots(timePreference, customerData = {}) {
 }
 
 /**
- * Parse natural language time preference
+ * Parse natural language time preference - ENHANCED FOR SPECIFIC TIMES
  */
 function parseTimePreference(input) {
   const inputLower = input.toLowerCase();
@@ -59,22 +69,82 @@ function parseTimePreference(input) {
     timeOfDay: null, // 'morning', 'afternoon', 'evening'
     urgency: 'normal', // 'urgent', 'today', 'normal'
     dayPreference: null, // 'today', 'tomorrow', 'this_week', 'next_week'
-    specificTime: null,
+    specificTime: null, // ENHANCED: Store specific time requests like "2pm", "14:00"
     flexibleDays: []
   };
   
-  // Parse time of day
-  if (inputLower.includes('morning') || inputLower.includes('am') || 
-      inputLower.includes('early') || inputLower.includes('8') || 
-      inputLower.includes('9') || inputLower.includes('10')) {
-    preference.timeOfDay = 'morning';
-  } else if (inputLower.includes('afternoon') || inputLower.includes('pm') || 
-             inputLower.includes('1') || inputLower.includes('2') || 
-             inputLower.includes('3') || inputLower.includes('4')) {
-    preference.timeOfDay = 'afternoon';
-  } else if (inputLower.includes('evening') || inputLower.includes('night') || 
-             inputLower.includes('5') || inputLower.includes('6')) {
-    preference.timeOfDay = 'evening';
+  // CRITICAL FIX: Parse specific time requests (2PM, 3PM, 14:00, etc.)
+  const timePatterns = [
+    // Pattern for times with minutes and PM/AM (e.g., "3:30 PM", "2:15 am")
+    /(\d{1,2}):(\d{2})\s*(pm|p\.m\.|p\.m|am|a\.m\.|a\.m)/i,
+    // Pattern for hour-only times with PM/AM (e.g., "2pm", "9 am")
+    /(\d{1,2})\s*(pm|p\.m\.|p\.m|am|a\.m\.|a\.m)/i,
+    // Pattern for 24-hour format (e.g., "14:30", "09:00")
+    /(\d{1,2}):(\d{2})(?!\s*(?:pm|am))/i
+  ];
+  
+  for (const pattern of timePatterns) {
+    const match = inputLower.match(pattern);
+    if (match) {
+      let hour = parseInt(match[1]);
+      let minute = 0;
+      let meridian = null;
+      
+      // Handle different pattern captures based on match groups
+      if (match[2] && match[3]) {
+        // Pattern with minutes and meridian (e.g., "3:30 PM")
+        minute = parseInt(match[2]);
+        meridian = match[3];
+      } else if (match[2] && !match[3]) {
+        // Pattern with only meridian (e.g., "2 PM") or only minutes (24-hour)
+        if (isNaN(parseInt(match[2]))) {
+          // It's a meridian (PM/AM)
+          meridian = match[2];
+        } else {
+          // It's minutes (24-hour format)
+          minute = parseInt(match[2]);
+        }
+      }
+      
+      // Convert to 24-hour format if meridian is present
+      if (meridian) {
+        const isPM = meridian.toLowerCase().includes('pm') || meridian.toLowerCase().includes('p.m');
+        const isAM = meridian.toLowerCase().includes('am') || meridian.toLowerCase().includes('a.m');
+        
+        if (isPM && hour !== 12) {
+          hour += 12;
+        } else if (isAM && hour === 12) {
+          hour = 0;
+        }
+      }
+      
+      preference.specificTime = { hour, minute };
+      console.log(`🕐 Specific time parsed: ${hour}:${minute.toString().padStart(2, '0')}`);
+      break;
+    }
+  }
+  
+  // Parse time of day (if no specific time)
+  if (!preference.specificTime) {
+    if (inputLower.includes('morning') || inputLower.includes('am') || 
+        inputLower.includes('early')) {
+      preference.timeOfDay = 'morning';
+    } else if (inputLower.includes('afternoon') || 
+               (inputLower.includes('pm') && !inputLower.includes('evening'))) {
+      preference.timeOfDay = 'afternoon';
+    } else if (inputLower.includes('evening') || inputLower.includes('night')) {
+      preference.timeOfDay = 'evening';
+    }
+  } else {
+    // Determine time of day based on specific time
+    const hour = preference.specificTime.hour;
+    if (hour >= 5 && hour < 12) {
+      preference.timeOfDay = 'morning';
+    } else if (hour >= 12 && hour < 16) {
+      preference.timeOfDay = 'afternoon';
+    } else {
+      preference.timeOfDay = 'evening';
+    }
   }
   
   // Parse urgency and day preference
@@ -142,7 +212,7 @@ function isPreferenceVague(preference, originalInput) {
 }
 
 /**
- * Generate time slots based on preference
+ * Generate time slots based on preference - FIXED FOR TODAY PREFERENCE
  */
 function generateTimeSlots(preference) {
   const slots = [];
@@ -151,100 +221,182 @@ function generateTimeSlots(preference) {
   
   // Determine start date based on preference
   let startDate = new Date(brisbaneTime);
+  let maxDays = 7; // Generate slots for the next 7 days
   
   if (preference.dayPreference === 'today') {
-    // Always allow today bookings - check actual availability instead of time restrictions
-    // Only skip if it's very late (after 8 PM)
+    // CRITICAL FIX: For today, generate slots for TODAY if possible
     if (brisbaneTime.getHours() >= 20) {
       console.log('🕰️ Too late for today (after 8 PM), moving to tomorrow');
       startDate.setDate(startDate.getDate() + 1); // Move to tomorrow
+      maxDays = 6; // Only need 6 more days since we skipped today
     } else {
       console.log('🕰️ Checking TODAY availability at', brisbaneTime.getHours() + ':' + brisbaneTime.getMinutes());
+      // Keep startDate as today, but only generate TODAY slots
+      maxDays = 1; // Only generate for today
     }
   } else if (preference.dayPreference === 'tomorrow') {
     startDate.setDate(startDate.getDate() + 1);
+    maxDays = 1; // Only generate for tomorrow
   } else if (preference.dayPreference === 'next_week') {
     startDate.setDate(startDate.getDate() + 7);
   }
   
-  // Generate slots for the next 7 days
-  for (let dayOffset = 0; dayOffset < 7; dayOffset++) {
+  // Generate slots for the determined number of days
+  for (let dayOffset = 0; dayOffset < maxDays; dayOffset++) {
     const slotDate = new Date(startDate);
     slotDate.setDate(slotDate.getDate() + dayOffset);
     
-    // Skip weekends unless specifically requested
-    if (slotDate.getDay() === 0 || slotDate.getDay() === 6) {
+    // CRITICAL FIX: For specific "today" or "tomorrow" requests, ALWAYS honor them regardless of weekend
+    const isSpecificDayRequest = (preference.dayPreference === 'today' || preference.dayPreference === 'tomorrow');
+    
+    // Skip weekends ONLY if it's not a specific day request and not flexible
+    if (!isSpecificDayRequest && (slotDate.getDay() === 0 || slotDate.getDay() === 6)) {
       if (!preference.flexibleDays.includes('saturday') && 
           !preference.flexibleDays.includes('sunday')) {
+        console.log(`⏩ Skipping weekend day: ${slotDate.toDateString()}`);
         continue;
       }
     }
     
-    // Generate time slots based on preference
-    const timeSlots = generateDayTimeSlots(slotDate, preference);
-    slots.push(...timeSlots);
+    // If it's a specific day request and a weekend, inform but proceed
+    if (isSpecificDayRequest && (slotDate.getDay() === 0 || slotDate.getDay() === 6)) {
+      const dayName = slotDate.getDay() === 0 ? 'Sunday' : 'Saturday';
+      console.log(`📅 Customer specifically requested ${preference.dayPreference.toUpperCase()} which is ${dayName} - honoring request`);
+    }
+    
+    // CRITICAL FIX: For today preference, ensure we only generate TODAY slots
+    if (preference.dayPreference === 'today' && dayOffset === 0) {
+      const todaySlots = generateDayTimeSlots(slotDate, preference);
+      slots.push(...todaySlots);
+      console.log(`📅 Generated ${todaySlots.length} slots for TODAY: ${slotDate.toDateString()}`);
+      break; // Only generate for today
+    } else if (preference.dayPreference === 'tomorrow' && dayOffset === 0) {
+      const tomorrowSlots = generateDayTimeSlots(slotDate, preference);
+      slots.push(...tomorrowSlots);
+      console.log(`📅 Generated ${tomorrowSlots.length} slots for TOMORROW: ${slotDate.toDateString()}`);
+      break; // Only generate for tomorrow
+    } else if (!preference.dayPreference || (preference.dayPreference !== 'today' && preference.dayPreference !== 'tomorrow')) {
+      // Generate time slots for multiple days (normal case)
+      const daySlots = generateDayTimeSlots(slotDate, preference);
+      slots.push(...daySlots);
+    }
   }
   
   return slots;
 }
 
 /**
- * Generate time slots for a specific day
+ * Generate time slots for a specific day - ENHANCED FOR SPECIFIC TIMES
  */
 function generateDayTimeSlots(date, preference) {
   const slots = [];
   const workingHours = {
     morning: [9, 10, 11],          // 9am-12pm 
-    afternoon: [13, 14, 15, 16],   // 1pm-5pm (FIXED: was including evening)
-    evening: [17, 18, 19]          // 5pm-8pm (FIXED: proper evening hours)
+    afternoon: [12, 13, 14, 15],   // 12pm-4pm (FIXED: True afternoon hours)
+    evening: [16, 17, 18, 19]      // 4pm-8pm (FIXED: Evening starts at 4pm)
   };
   
   let hoursToGenerate = [];
   
-  if (preference.timeOfDay === 'morning') {
-    hoursToGenerate = workingHours.morning;
-  } else if (preference.timeOfDay === 'afternoon') {
-    hoursToGenerate = workingHours.afternoon;
-    console.log('🕐 Generating AFTERNOON slots for hours:', hoursToGenerate);
-  } else if (preference.timeOfDay === 'evening') {
-    hoursToGenerate = workingHours.evening;
+  // CRITICAL FIX: Handle specific time requests first
+  if (preference.specificTime) {
+    const requestedHour = preference.specificTime.hour;
+    const requestedMinute = preference.specificTime.minute;
+    
+    console.log(`🎯 Customer requested specific time: ${requestedHour}:${requestedMinute.toString().padStart(2, '0')}`);
+    
+    // Check if requested time is within working hours
+    const allWorkingHours = [...workingHours.morning, ...workingHours.afternoon, ...workingHours.evening];
+    if (allWorkingHours.includes(requestedHour)) {
+      hoursToGenerate = [requestedHour];
+      console.log(`✅ Requested time ${requestedHour}:${requestedMinute.toString().padStart(2, '0')} is within working hours`);
+    } else {
+      console.log(`❌ Requested time ${requestedHour}:${requestedMinute.toString().padStart(2, '0')} is outside working hours`);
+      // Fall back to time of day
+      if (preference.timeOfDay === 'morning') {
+        hoursToGenerate = workingHours.morning;
+      } else if (preference.timeOfDay === 'afternoon') {
+        hoursToGenerate = workingHours.afternoon;
+      } else if (preference.timeOfDay === 'evening') {
+        hoursToGenerate = workingHours.evening;
+      } else {
+        hoursToGenerate = workingHours.afternoon; // Default to afternoon
+      }
+    }
   } else {
-    // No specific preference, offer all times but prioritize morning/afternoon
-    hoursToGenerate = [...workingHours.morning, ...workingHours.afternoon];
+    // Original logic for time of day
+    if (preference.timeOfDay === 'morning') {
+      hoursToGenerate = workingHours.morning;
+    } else if (preference.timeOfDay === 'afternoon') {
+      hoursToGenerate = workingHours.afternoon;
+      console.log('🕐 Generating AFTERNOON slots for hours:', hoursToGenerate);
+    } else if (preference.timeOfDay === 'evening') {
+      hoursToGenerate = workingHours.evening;
+    } else {
+      // No specific preference, offer all times but prioritize morning/afternoon
+      hoursToGenerate = [...workingHours.morning, ...workingHours.afternoon];
+    }
   }
   
-  // CRITICAL FIX: For tomorrow preference, ensure we're generating for tomorrow IN BRISBANE TIME
+  // CRITICAL FIX: Proper date handling for Brisbane timezone
+  const now = new Date();
+  const brisbaneTime = new Date(now.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
   let targetDate;
-  if (preference.dayPreference === 'tomorrow') {
-    // Create date in Brisbane timezone
-    const now = new Date();
-    const brisbaneTime = new Date(now.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
+  
+  if (preference.dayPreference === 'today') {
+    // Use today's date in Brisbane timezone
+    targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate());
+    console.log('📅 Generating slots for TODAY:', targetDate.toDateString());
+  } else if (preference.dayPreference === 'tomorrow') {
+    // Use tomorrow's date in Brisbane timezone
     targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate() + 1);
     console.log('📅 Generating slots for TOMORROW:', targetDate.toDateString());
-    date = targetDate;
   } else {
-    // Use the provided date, but ensure it's in Brisbane context
-    const brisbaneTime = new Date(date.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
-    targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate());
-    date = targetDate;
+    // Use the provided date, but normalize to Brisbane timezone
+    targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    console.log('📅 Generating slots for DATE:', targetDate.toDateString());
   }
   
   hoursToGenerate.forEach(hour => {
-    // Generate slots at 00 and 30 minutes - CRITICAL FIX: Create in Brisbane timezone
-    [0, 30].forEach(minute => {
-      // Create the date object properly in Brisbane timezone
-      // Brisbane is UTC+10, so we need to create the date correctly
-      const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+10:00`;
-      const startTime = new Date(dateStr);
+    let minutesToGenerate;
+    
+    // If customer requested specific time, generate that exact time
+    if (preference.specificTime && preference.specificTime.hour === hour) {
+      minutesToGenerate = [preference.specificTime.minute];
+      console.log(`🎯 Generating SPECIFIC requested time: ${hour}:${preference.specificTime.minute.toString().padStart(2, '0')}`);
+    } else {
+      // Generate standard 30-minute intervals
+      minutesToGenerate = [0, 30];
+    }
+    
+    minutesToGenerate.forEach(minute => {
+      // CRITICAL FIX: Create date in Brisbane timezone (UTC+10)
+      const year = targetDate.getFullYear();
+      const month = targetDate.getMonth();
+      const day = targetDate.getDate();
+      
+      // Create a date string in Brisbane timezone format and parse it
+      const brisbaneTimeString = `${year}-${(month + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00+10:00`;
+      const startTime = new Date(brisbaneTimeString);
       
       const endTime = new Date(startTime.getTime() + 75 * 60000); // 1h 15m default duration
+      
+      console.log(`🕐 Generated slot: ${startTime.toLocaleString('en-AU', { 
+        timeZone: 'Australia/Brisbane',
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      })}`);
       
       slots.push({
         start: startTime,
         end: endTime,
         duration: 75,
         type: 'customer_preferred',
-        preferenceMatch: calculatePreferenceMatch(hour, preference)
+        preferenceMatch: calculatePreferenceMatch(hour, preference, minute)
       });
     });
   });
@@ -255,12 +407,21 @@ function generateDayTimeSlots(date, preference) {
 /**
  * Calculate how well a time slot matches customer preference
  */
-function calculatePreferenceMatch(hour, preference) {
+function calculatePreferenceMatch(hour, preference, minute = 0) {
   let score = 50; // Base score
   
+  // HIGHEST PRIORITY: Exact time match
+  if (preference.specificTime && 
+      preference.specificTime.hour === hour && 
+      preference.specificTime.minute === minute) {
+    score += 50; // Maximum bonus for exact time match
+    console.log(`🎯 EXACT TIME MATCH: ${hour}:${minute.toString().padStart(2, '0')} - Score: ${score}`);
+  }
+  
+  // Time of day preference
   if (preference.timeOfDay === 'morning' && hour <= 11) score += 30;
-  else if (preference.timeOfDay === 'afternoon' && hour >= 13 && hour <= 16) score += 30;
-  else if (preference.timeOfDay === 'evening' && hour >= 17) score += 30;
+  else if (preference.timeOfDay === 'afternoon' && hour >= 12 && hour <= 15) score += 30; // FIXED: 12pm-4pm
+  else if (preference.timeOfDay === 'evening' && hour >= 16) score += 30; // FIXED: 4pm+
   
   if (preference.urgency === 'urgent') score += 20;
   

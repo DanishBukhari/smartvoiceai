@@ -414,7 +414,7 @@ async function handleTimeout() {
 }
 
 /**
- * Collect time preference from customer
+ * Collect time preference from customer - ENHANCED TO PREVENT LOOPS
  */
 async function collectTimePreference(input) {
   console.log('⏰ Collecting time preference:', input);
@@ -424,6 +424,9 @@ async function collectTimePreference(input) {
   stateMachine.customerData.timePreference = input;
   
   console.log('⏰ Time preference recorded:', stateMachine.customerData.timePreference);
+  
+  // CRITICAL FIX: Track previously offered slots to avoid repetition
+  if (!stateMachine.offeredSlots) stateMachine.offeredSlots = [];
   
   // Find available slots based on customer preference
   const { findAvailableSlots } = require('./modules/timePreferenceHandler');
@@ -439,31 +442,131 @@ async function collectTimePreference(input) {
     
     const availableSlots = result.slots || result; // Handle both new and old format
     
-    if (availableSlots && availableSlots.length > 0) {
-      // Offer the best available slot
-      const recommendedSlot = availableSlots[0];
-      
-      // Store the recommended slot for confirmation
-      stateMachine.recommendedSlot = recommendedSlot;
-      transitionTo('confirm_time_slot');
-      
-      const appointmentTime = new Date(recommendedSlot.start).toLocaleString('en-AU', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        timeZone: 'Australia/Brisbane',
-        hour12: true
+    // CRITICAL FIX: Handle specific time requests with clear availability communication
+    if (result.requestedSpecificTime && availableSlots && availableSlots.length > 0) {
+      // Check if the exact requested time is available
+      const exactTimeSlot = availableSlots.find(slot => {
+        const slotTime = new Date(slot.start);
+        return slotTime.getHours() === result.requestedSpecificTime.hour && 
+               slotTime.getMinutes() === result.requestedSpecificTime.minute;
       });
       
-      return `Perfect! Based on your preference, the earliest available time is ${appointmentTime}. Does that work for you, or would you prefer a different time?`;
-    } else {
-      // No slots available, ask for alternative preference
-      transitionTo('collect_time_preference');
-      return "I don't have any availability for that time. Would you prefer a morning or evening appointment? I can also check tomorrow or later this week.";
+      if (exactTimeSlot) {
+        console.log(`✅ Exact requested time ${result.requestedSpecificTime.hour}:${result.requestedSpecificTime.minute.toString().padStart(2, '0')} is available`);
+        // Proceed with exact time
+        stateMachine.recommendedSlot = exactTimeSlot;
+        transitionTo('confirm_time_slot');
+        
+        const exactTime = new Date(exactTimeSlot.start).toLocaleString('en-AU', {
+          weekday: 'long',
+          day: 'numeric', 
+          month: 'long',
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZone: 'Australia/Brisbane',
+          hour12: true
+        });
+        
+        return `Perfect! ${exactTime} is available. Would you like me to book this appointment for you?`;
+      } else {
+        console.log(`❌ Exact requested time ${result.requestedSpecificTime.hour}:${result.requestedSpecificTime.minute.toString().padStart(2, '0')} not available, offering alternatives`);
+        
+        // Offer the closest available times
+        const alternatives = availableSlots.slice(0, 2).map(slot => {
+          return new Date(slot.start).toLocaleString('en-AU', {
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZone: 'Australia/Brisbane',
+            hour12: true
+          });
+        });
+        
+        const requestedTimeStr = `${result.requestedSpecificTime.hour % 12 || 12}:${result.requestedSpecificTime.minute.toString().padStart(2, '0')}${result.requestedSpecificTime.hour >= 12 ? 'PM' : 'AM'}`;
+        
+        if (alternatives.length === 1) {
+          return `I don't have ${requestedTimeStr} available, but I do have ${alternatives[0]} available. Would that work for you?`;
+        } else if (alternatives.length === 2) {
+          return `I don't have ${requestedTimeStr} available, but I have ${alternatives[0]} or ${alternatives[1]} available. Which would you prefer?`;
+        }
+      }
     }
+    
+    if (availableSlots && availableSlots.length > 0) {
+      // CRITICAL FIX: Find a slot that hasn't been offered before
+      let recommendedSlot = null;
+      
+      for (const slot of availableSlots) {
+        const slotKey = `${slot.start}_${slot.end}`;
+        if (!stateMachine.offeredSlots.includes(slotKey)) {
+          recommendedSlot = slot;
+          stateMachine.offeredSlots.push(slotKey);
+          break;
+        }
+      }
+      
+      // If all slots have been offered, reset and offer the first one
+      if (!recommendedSlot && availableSlots.length > 0) {
+        console.log('🔄 All slots previously offered, resetting and offering alternatives');
+        stateMachine.offeredSlots = [];
+        recommendedSlot = availableSlots[0];
+        stateMachine.offeredSlots.push(`${recommendedSlot.start}_${recommendedSlot.end}`);
+      }
+      
+      if (recommendedSlot) {
+        // Store the recommended slot for confirmation
+        stateMachine.recommendedSlot = recommendedSlot;
+        transitionTo('confirm_time_slot');
+        
+        const appointmentTime = new Date(recommendedSlot.start).toLocaleString('en-AU', {
+          weekday: 'long',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZone: 'Australia/Brisbane',
+          hour12: true
+        });
+        
+        // CRITICAL FIX: Enhanced response variations with multiple options for same day requests
+        if (stateMachine.offeredSlots.length === 1) {
+          return `Perfect! Based on your preference, the earliest available time is ${appointmentTime}. Does that work for you, or would you prefer a different time?`;
+        } else if (stateMachine.offeredSlots.length === 2) {
+          return `How about ${appointmentTime}? Would this time be better for you?`;
+        } else if (input && input.toLowerCase().includes('more option') && input.toLowerCase().includes('today')) {
+          // Special handling for "more options for today" requests
+          const todaySlots = availableSlots.filter(slot => {
+            const slotDate = new Date(slot.start);
+            const today = new Date();
+            const brisbaneToday = new Date(today.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
+            return slotDate.toDateString() === brisbaneToday.toDateString();
+          }).slice(0, 3); // Show top 3 today options
+          
+          if (todaySlots.length > 1) {
+            const todayOptions = todaySlots.map((slot, i) => {
+              const time = new Date(slot.start).toLocaleString('en-AU', {
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZone: 'Australia/Brisbane',
+                hour12: true
+              });
+              return `${i + 1}. ${time}`;
+            }).join('\n');
+            
+            return `Here are today's available times:\n${todayOptions}\n\nWhich time would you prefer?`;
+          } else {
+            return `I have ${appointmentTime} available for today. Would you like to book this appointment, or shall I check tomorrow's availability?`;
+          }
+        } else {
+          return `I have ${appointmentTime} available. Would you like to book this appointment, or shall I check for more options?`;
+        }
+      }
+    }
+    
+    // No slots available, offer manual scheduling
+    transitionTo('manual_scheduling');
+    return "Let me check our schedule manually for you. What specific day and time range would work best? I can also have our scheduler call you back to find the perfect time.";
+    
   } catch (error) {
     console.error('Error finding available slots:', error);
     // Fallback to manual scheduling
@@ -483,6 +586,24 @@ async function confirmTimeSlot(input) {
   
   const inputLower = input.toLowerCase().trim();
   
+  // CRITICAL FIX: Handle "more options" requests specifically
+  const isRequestingMoreOptions = inputLower.includes('more option') || 
+                                 inputLower.includes('other option') ||
+                                 inputLower.includes('check more') ||
+                                 inputLower.includes('show more') ||
+                                 inputLower.includes('what else') ||
+                                 inputLower.includes('other time');
+  
+  if (isRequestingMoreOptions) {
+    console.log('🔍 Customer requesting more options, showing additional slots');
+    
+    // Get the last time preference context to show more options for same preference
+    const lastPreference = stateMachine.timePreference || 'I would prefer a different time';
+    
+    transitionTo('collect_time_preference');
+    return await collectTimePreference(lastPreference + ' - show me more options');
+  }
+  
   // CRITICAL FIX: Check if customer is giving a new time preference instead of confirming/rejecting
   const isGivingNewPreference = inputLower.includes('prefer') || 
                                inputLower.includes('tomorrow') || 
@@ -490,7 +611,8 @@ async function confirmTimeSlot(input) {
                                inputLower.includes('afternoon') || 
                                inputLower.includes('evening') ||
                                inputLower.includes('later') ||
-                               inputLower.includes('earlier');
+                               inputLower.includes('earlier') ||
+                               inputLower.includes('today');
   
   // If they're giving a new preference, treat it as such rather than rejection
   if (isGivingNewPreference && !confirmationWords.some(word => inputLower.includes(word))) {
@@ -534,10 +656,43 @@ async function confirmTimeSlot(input) {
 }
 
 /**
- * Collect special instructions from customer
+ * Collect special instructions from customer - CONVERSATIONAL VERSION WITH ADDRESS COMPLETION CHECK
  */
 async function collectSpecialInstructions(input) {
   console.log('📝 Collecting special instructions:', input);
+  
+  // CRITICAL FIX: Check if this is actually address completion, not special instructions
+  const currentData = stateMachine.customerData || {};
+  
+  // If we have a partial address and input looks like postcode/suburb completion
+  if (currentData.address && !currentData.address.includes('QLD') && !currentData.address.includes('NSW')) {
+    const postcodePatterns = [
+      /^([A-Za-z\s]+,?\s*[A-Z]{2,3}\s+\d{4})\.?$/i,  // "Biswin City, QLD 4000"
+      /^([A-Z]{2,3}\s+\d{4})\.?$/i,                    // "QLD 4000"
+      /^\d{4}\.?$/i,                                   // "4000"
+      /^([A-Za-z\s]+,?\s*\d{4})\.?$/i                  // "Brisbane City, 4000"
+    ];
+    
+    for (const pattern of postcodePatterns) {
+      if (pattern.test(input.trim())) {
+        console.log('🏠 Detected address completion, not special instructions');
+        
+        // Complete the address
+        const { extractDataFromInput } = require('./modules/conversationalAI');
+        const extractedData = extractDataFromInput(input, currentData);
+        
+        if (extractedData.address) {
+          const { updateCustomerData } = require('./modules/stateMachine');
+          updateCustomerData(extractedData);
+          console.log('🏠 Address completed:', extractedData.address);
+          
+          // Continue with actual special instructions
+          transitionTo('collect_special_instructions');
+          return "Got it! Do you have any special instructions for our plumber, such as gate access codes or specific areas to focus on?";
+        }
+      }
+    }
+  }
   
   // Check if we already have special instructions and are now collecting time preference
   if (stateMachine.customerData?.specialInstructions && 
@@ -546,25 +701,30 @@ async function collectSpecialInstructions(input) {
     return await collectTimePreference(input);
   }
   
-  // Store the instructions
+  // Store the instructions with conversational acknowledgment
   if (!stateMachine.customerData) stateMachine.customerData = {};
+  
+  let response = '';
   
   if (input.toLowerCase().includes('no') || input.toLowerCase().includes('nothing') || input.toLowerCase().includes('none')) {
     stateMachine.customerData.specialInstructions = 'Standard plumbing service - no special requirements';
+    response = 'Perfect! ';
   } else {
     stateMachine.customerData.specialInstructions = input;
+    response = 'Thanks for those details! ';
   }
   
   console.log('📝 Special instructions recorded:', stateMachine.customerData.specialInstructions);
   
-  // Now transition to collect time preference instead of direct booking
+  // Conversational transition to time preference
   const transitionSuccess = transitionTo('collect_time_preference');
   if (!transitionSuccess) {
     console.error('❌ Failed to transition to collect_time_preference, forcing state change');
     stateMachine.currentState = 'collect_time_preference';
   }
   
-  return "Thank you for those details. Now, what time would work best for you? We have availability today, tomorrow, or later this week. Would you prefer a morning or afternoon appointment?";
+  response += "Now, what time would work best for you? We have availability today, tomorrow, or later this week. Would you prefer a morning or afternoon appointment?";
+  return response;
 }
 
 /**

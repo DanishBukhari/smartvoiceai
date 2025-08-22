@@ -663,142 +663,22 @@ function generateAppointmentReference() {
  * Enhanced detail collection with better validation
  */
 async function startDetailCollection(userInput) {
-  console.log('📋 Starting enhanced detail collection...');
+  console.log('🧠 Starting CONVERSATIONAL detail collection...');
   
-  // First, try to extract data from the current input if provided
-  if (userInput && userInput.trim().length > 0) {
-    const currentData = stateMachine.customerData || {};
-    const extractedData = extractDataFromInput(userInput, currentData);
-    if (extractedData && Object.keys(extractedData).length > 0) {
-      updateCustomerData(extractedData);
-      console.log('📊 Extracted data in startDetailCollection:', extractedData);
-    }
-  }
-  
-  // Check what details we already have
-  const currentData = stateMachine.customerData || {};
-  const clientData = stateMachine.clientData || {};
-  
-  // Ensure caller phone number is stored in customer data if available
-  if (stateMachine.callerPhoneNumber && !currentData.phone) {
-    updateCustomerData({ phone: stateMachine.callerPhoneNumber });
-    console.log('📞 Auto-set phone number from caller:', stateMachine.callerPhoneNumber);
-  }
-  
-  console.log('📊 Current customer data:', currentData);
-  console.log('📊 Client data status:', clientData);
-  console.log('📞 Caller phone number available:', stateMachine.callerPhoneNumber);
-  
-  // Determine what we need to collect next (proper order)
-  const missingDetails = [];
-  
-  if (!currentData.name) missingDetails.push('name');
-  if (!currentData.email) missingDetails.push('email');
-  if (!currentData.address) missingDetails.push('address');
-  
-  // Only collect phone if not available from caller ID and not in customer data
-  if (!currentData.phone && !stateMachine.callerPhoneNumber) {
-    missingDetails.push('phone');
-  } else if (stateMachine.callerPhoneNumber && !currentData.phone) {
-    // Auto-store caller phone number in customer data
-    updateCustomerData({ phone: stateMachine.callerPhoneNumber });
-    console.log(`📞 Auto-detected phone number: ${stateMachine.callerPhoneNumber}`);
-  }
-  
-  // Ask for special instructions AFTER address is collected (optional but prompted)
-  if (!currentData.specialInstructions && currentData.address) {
-    missingDetails.push('specialInstructions');
-  }
-  
-  if (missingDetails.length === 0) {
-    console.log('🎯 All details collected, proceeding to booking');
-    return await proceedToBooking(userInput);
-  }
-  
-  // Ask for the next missing detail
-  const nextDetail = missingDetails[0];
-  transitionTo('collect_details');
-  
-  switch (nextDetail) {
-    case 'name':
-      return "I'll need to get some details to book your appointment. Could I start with your name?";
-    case 'address':
-      return "Thank you. What's your full address including suburb and postcode?";
-    case 'email':
-      return "Perfect. And what's your email address for the booking confirmation?";
-    case 'phone':
-      return "Great. What's the best phone number to reach you on?";
-    case 'specialInstructions':
-      stateMachine.askingForSpecialInstructions = true; // Set flag
-      return "Do you have any special instructions or access requirements for our technician? For example, gate codes, preferred entry points, or specific areas to avoid?";
-    default:
-      return "I need a few more details to complete your booking. Let's start with your name and address.";
-  }
+  // Use the new Conversational AI engine instead of rigid questionnaire
+  const { startConversationalDetailCollection } = require('./conversationalAI');
+  return await startConversationalDetailCollection(userInput);
 }
 
 /**
- * Handles detail collection step by step
+ * Handles detail collection step by step with CONVERSATIONAL AI
  */
 async function handleDetailCollection(userInput) {
-  console.log('📋 Collecting detail:', userInput);
+  console.log('🧠 CONVERSATIONAL AI: Processing user input');
   
-  // Update conversation history
-  addToHistory('user', userInput);
-  
-  // Extract data from user input using basic parsing
-  const existingData = stateMachine.customerData || {};
-  const extractedData = extractDataFromInput(userInput, existingData);
-  
-  // Handle incomplete address
-  if (extractedData.incompleteAddress && !extractedData.address) {
-    const { suggestAddressCompletion } = require('./addressValidator');
-    const missing = suggestAddressCompletion(extractedData.incompleteAddress);
-    
-    return `I have "${extractedData.incompleteAddress}" but I need the complete address. Could you please provide the ${missing.join(' and ')}?`;
-  }
-  
-  // Update customer data using proper synchronization function
-  if (extractedData && Object.keys(extractedData).length > 0) {
-    updateCustomerData(extractedData);
-    console.log('📊 Updated customer data:', stateMachine.customerData);
-  }
-  
-  // Check if we have all details now
-  // Note: phone is auto-detected from caller ID, so not required to be asked for
-  const currentData = stateMachine.customerData || {};
-  
-  // Auto-store caller phone number if available and not already stored
-  if (stateMachine.callerPhoneNumber && !currentData.phone) {
-    updateCustomerData({ phone: stateMachine.callerPhoneNumber });
-    console.log(`📞 Auto-detected phone number: ${stateMachine.callerPhoneNumber}`);
-  }
-  
-  // Required details (phone is auto-detected, not manually collected)
-  const hasName = !!(currentData.name);
-  const hasEmail = !!(currentData.email);
-  const hasAddress = !!(currentData.address);
-  const hasPhone = !!(currentData.phone || stateMachine.callerPhoneNumber);
-  
-  // Check if we need to transition to special instructions collection
-  const hasSpecialInstructions = !!(currentData.specialInstructions || stateMachine.specialInstructionsCollected);
-  
-  // If we have all basic details but no special instructions, transition to collect_special_instructions state
-  if (hasName && hasEmail && hasAddress && hasPhone && !hasSpecialInstructions) {
-    console.log('🎯 All basic details collected, transitioning to special instructions collection');
-    const { transitionTo } = require('./stateMachine');
-    transitionTo('collect_special_instructions');
-    return "Do you have any special instructions for our plumber, such as gate access codes or specific areas to focus on?";
-  }
-  
-  // All details collected including special instructions (or skipped)
-  const hasAllDetails = hasName && hasEmail && hasAddress && hasPhone && hasSpecialInstructions;
-  
-  if (hasAllDetails) {
-    console.log('🎯 All details collected, proceeding to appointment booking');
-    return await proceedToBooking(userInput);
-  } else {
-    return await startDetailCollection(userInput);
-  }
+  // Use the new Conversational AI engine instead of rigid logic
+  const { handleConversationalDetailCollection } = require('./conversationalAI');
+  return await handleConversationalDetailCollection(userInput);
 }
 
 /**
