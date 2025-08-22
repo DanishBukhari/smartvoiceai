@@ -364,6 +364,32 @@ async function handleBookingComplete(input) {
   
   const lowerInput = input.toLowerCase();
   
+  // 🚨 FIX: Detect when customer wants to CHANGE booking time or book for DIFFERENT day
+  const wantsToChangeTime = (
+    lowerInput.includes('tomorrow') ||
+    lowerInput.includes('change') ||
+    lowerInput.includes('reschedule') ||
+    lowerInput.includes('cancel') ||
+    lowerInput.includes('different') ||
+    lowerInput.includes('not') ||
+    (lowerInput.includes('book') && (lowerInput.includes('tomorrow') || lowerInput.includes('different'))) ||
+    lowerInput.includes('prefer')
+  );
+  
+  if (wantsToChangeTime) {
+    console.log('🔄 Customer wants to change booking time, transitioning to time preference collection');
+    
+    // Reset time-related data but keep customer details
+    if (stateMachine.selectedSlot) {
+      delete stateMachine.selectedSlot;
+    }
+    
+    // Transition back to time preference collection
+    transitionTo('collect_time_preference', 'customer wants to change booking time');
+    
+    return "I understand you'd like to change the appointment time. What time would work better for you? I can check availability for today, tomorrow, or later this week.";
+  }
+  
   // Handle appointment time inquiries with stored booking details
   if (lowerInput.includes('time') || lowerInput.includes('when') || lowerInput.includes('appointment')) {
     const bookingDetails = stateMachine.bookingDetails;

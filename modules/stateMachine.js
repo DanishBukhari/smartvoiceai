@@ -73,7 +73,7 @@ const stateTransitions = {
   'collect_special_instructions': ['collect_time_preference', 'booking_complete'],
   'collect_time_preference': ['confirm_time_slot', 'collect_time_preference', 'manual_scheduling'],
   'confirm_time_slot': ['booking_complete', 'collect_time_preference'],
-  'booking_complete': ['general', 'ended', 'urgent_booking', 'collect_details'],
+  'booking_complete': ['general', 'ended', 'urgent_booking', 'collect_details', 'collect_time_preference'],
   'emergency': ['urgent_booking'],
   'urgent_booking': ['collect_details', 'booking_in_progress'],
   'manual_scheduling': ['collect_details', 'booking_complete']

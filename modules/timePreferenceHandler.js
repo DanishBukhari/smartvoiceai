@@ -110,19 +110,35 @@ function isPreferenceVague(preference, originalInput) {
   // Very short responses that don't provide useful info
   if (inputLower.length < 5) return true;
   
-  // Generic responses that don't specify preference
-  const vagueResponses = [
-    'i would like', 'i want', 'i prefer', 'i need', 'maybe', 'not sure',
-    'anytime', 'whenever', 'flexible', 'doesn\'t matter'
+  // If we have clear day preference (today, tomorrow) OR time preference, NOT vague
+  if (preference.dayPreference || preference.timeOfDay || preference.specificTime) {
+    console.log('🎯 Clear preference detected:', { 
+      day: preference.dayPreference, 
+      time: preference.timeOfDay 
+    });
+    return false;
+  }
+  
+  // Generic responses that don't provide useful info
+  const actuallyVagueResponses = [
+    'maybe', 'not sure', 'anytime', 'whenever', 'flexible', 'doesn\'t matter',
+    'neither', 'i don\'t know'
   ];
   
-  const isVague = vagueResponses.some(vague => inputLower.includes(vague));
+  const isVague = actuallyVagueResponses.some(vague => inputLower.includes(vague));
   
-  // If no specific time preference was detected
+  // If no specific time preference was detected AND it's a vague response
   const hasNoTimeInfo = !preference.timeOfDay && !preference.dayPreference && 
                        !preference.specificTime && preference.flexibleDays.length === 0;
   
-  return isVague || hasNoTimeInfo;
+  console.log('🔍 Vague check:', {
+    input: inputLower,
+    hasTimeInfo: !hasNoTimeInfo,
+    isVagueResponse: isVague,
+    result: isVague && hasNoTimeInfo
+  });
+  
+  return isVague && hasNoTimeInfo;
 }
 
 /**
@@ -137,9 +153,13 @@ function generateTimeSlots(preference) {
   let startDate = new Date(brisbaneTime);
   
   if (preference.dayPreference === 'today') {
-    // Check if it's still reasonable to book today (before 4 PM)
-    if (brisbaneTime.getHours() >= 16) {
+    // Always allow today bookings - check actual availability instead of time restrictions
+    // Only skip if it's very late (after 8 PM)
+    if (brisbaneTime.getHours() >= 20) {
+      console.log('🕰️ Too late for today (after 8 PM), moving to tomorrow');
       startDate.setDate(startDate.getDate() + 1); // Move to tomorrow
+    } else {
+      console.log('🕰️ Checking TODAY availability at', brisbaneTime.getHours() + ':' + brisbaneTime.getMinutes());
     }
   } else if (preference.dayPreference === 'tomorrow') {
     startDate.setDate(startDate.getDate() + 1);

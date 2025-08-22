@@ -142,6 +142,12 @@ function applyAddressCorrections(input) {
     .replace(/winston city/gi, 'Brisbane City')          // CRITICAL FIX
     .replace(/bismayne/gi, 'Brisbane')                   // CRITICAL FIX: "Bismayne" → "Brisbane"
     .replace(/qid/gi, 'QLD')                            // CRITICAL FIX: "QID" → "QLD"
+    .replace(/bains, b, qld/gi, 'Brisbane QLD 4000')     // NEW FIX: "Bains, B, QLD" → "Brisbane QLD 4000"
+    .replace(/bains/gi, 'Brisbane')                      // NEW FIX: "Bains" → "Brisbane"
+    .replace(/, b, qld/gi, ', Brisbane QLD 4000')        // NEW FIX: ", B, QLD" → ", Brisbane QLD 4000"
+    .replace(/\+1, 23\./gi, '123')                       // NEW FIX: "+1, 23." → "123"
+    .replace(/queen\./gi, 'Queen')                       // NEW FIX: "Queen." → "Queen"
+    .replace(/street\./gi, 'Street')                     // NEW FIX: "Street." → "Street"
     .replace(/queen/gi, 'Queen')
     .replace(/street/gi, 'Street')
     .replace(/(\d+) (\d+) (\d+) queen/gi, '$1$2$3 Queen')
