@@ -171,6 +171,14 @@ async function handleInput(input, confidence = 1.0) {
           response = await collectSpecialInstructions(input);
           break;
           
+        case 'collect_time_preference':
+          response = await collectTimePreference(input);
+          break;
+          
+        case 'confirm_time_slot':
+          response = await confirmTimeSlot(input);
+          break;
+          
         // Post-booking states
         case 'booking_complete':
           response = await handleBookingComplete(input);
@@ -404,10 +412,92 @@ async function handleTimeout() {
 }
 
 /**
+ * Collect time preference from customer
+ */
+async function collectTimePreference(input) {
+  console.log('⏰ Collecting time preference:', input);
+  
+  // Store the time preference
+  if (!stateMachine.customerData) stateMachine.customerData = {};
+  stateMachine.customerData.timePreference = input;
+  
+  console.log('⏰ Time preference recorded:', stateMachine.customerData.timePreference);
+  
+  // Find available slots based on customer preference
+  const { findAvailableSlots } = require('./modules/timePreferenceHandler');
+  
+  try {
+    const availableSlots = await findAvailableSlots(input, stateMachine.customerData);
+    
+    if (availableSlots && availableSlots.length > 0) {
+      // Offer the best available slot
+      const recommendedSlot = availableSlots[0];
+      
+      // Store the recommended slot for confirmation
+      stateMachine.recommendedSlot = recommendedSlot;
+      transitionTo('confirm_time_slot');
+      
+      const appointmentTime = new Date(recommendedSlot.start).toLocaleString('en-AU', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZone: 'Australia/Brisbane',
+        hour12: true
+      });
+      
+      return `Perfect! Based on your preference, the earliest available time is ${appointmentTime}. Does that work for you, or would you prefer a different time?`;
+    } else {
+      // No slots available, ask for alternative preference
+      transitionTo('collect_time_preference');
+      return "I don't have any availability for that time. Would you prefer a morning or evening appointment? I can also check tomorrow or later this week.";
+    }
+  } catch (error) {
+    console.error('Error finding available slots:', error);
+    // Fallback to manual scheduling
+    transitionTo('manual_scheduling');
+    return "Let me check our schedule manually. What specific day and time would work best for you, and I'll see what we have available?";
+  }
+}
+
+/**
+ * Confirm time slot with customer
+ */
+async function confirmTimeSlot(input) {
+  console.log('✅ Confirming time slot:', input);
+  
+  const confirmationWords = ['yes', 'yeah', 'okay', 'ok', 'sure', 'perfect', 'good', 'fine', 'works', 'confirm'];
+  const rejectionWords = ['no', 'not', 'different', 'another', 'else', 'later', 'earlier'];
+  
+  const inputLower = input.toLowerCase();
+  const isConfirming = confirmationWords.some(word => inputLower.includes(word));
+  const isRejecting = rejectionWords.some(word => inputLower.includes(word));
+  
+  if (isConfirming && !isRejecting) {
+    // Customer confirmed the time, proceed to booking
+    const { proceedToBookingWithSlot } = require('./modules/enhancedBookingFlow');
+    return await proceedToBookingWithSlot(stateMachine.recommendedSlot);
+  } else {
+    // Customer wants a different time
+    transitionTo('collect_time_preference');
+    return "No problem! What day and time would work better for you? I can check morning or afternoon appointments, and we have availability this week and next week.";
+  }
+}
+
+/**
  * Collect special instructions from customer
  */
 async function collectSpecialInstructions(input) {
   console.log('📝 Collecting special instructions:', input);
+  
+  // Check if we already have special instructions and are now collecting time preference
+  if (stateMachine.customerData?.specialInstructions && 
+      stateMachine.customerData.specialInstructions !== 'Standard plumbing service - no special requirements') {
+    console.log('📝 Special instructions already collected, treating input as time preference');
+    return await collectTimePreference(input);
+  }
   
   // Store the instructions
   if (!stateMachine.customerData) stateMachine.customerData = {};
@@ -420,9 +510,14 @@ async function collectSpecialInstructions(input) {
   
   console.log('📝 Special instructions recorded:', stateMachine.customerData.specialInstructions);
   
-  // Now that we have all details including special instructions, proceed to booking
-  const { proceedToBooking } = require('./modules/enhancedBookingFlow');
-  return await proceedToBooking(input);
+  // Now transition to collect time preference instead of direct booking
+  const transitionSuccess = transitionTo('collect_time_preference');
+  if (!transitionSuccess) {
+    console.error('❌ Failed to transition to collect_time_preference, forcing state change');
+    stateMachine.currentState = 'collect_time_preference';
+  }
+  
+  return "Thank you for those details. Now, what time would work best for you? We have availability today, tomorrow, or later this week. Would you prefer a morning or afternoon appointment?";
 }
 
 /**

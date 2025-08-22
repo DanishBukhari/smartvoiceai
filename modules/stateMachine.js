@@ -17,6 +17,7 @@ const stateMachine = {
   appointmentId: null,
   bookingDetails: null, // Store complete booking information
   referenceNumber: null, // Store reference number separately
+  recommendedSlot: null, // Store recommended time slot for confirmation
   
   // Detail collection
   collectingDetail: null, // 'name', 'email', 'address', 'phone', 'specialInstructions'
@@ -25,6 +26,11 @@ const stateMachine = {
   confirmingAllDetails: false,
   modifyingDetail: null,
   askingForSpecialInstructions: false, // Flag to track when we're asking for special instructions
+  
+  // Time preference handling
+  collectingTimePreference: false,
+  timePreferenceCollected: false,
+  awaitingTimeConfirmation: false,
   
   // Confirmation flows
   spellingConfirmation: false,
@@ -64,7 +70,9 @@ const stateTransitions = {
   'collect_details': ['book_appointment', 'ask_booking', 'booking_complete', 'collect_details', 'collect_special_instructions'],
   'book_appointment': ['confirm_slot', 'collect_details'],
   'confirm_slot': ['collect_special_instructions', 'book_appointment'],
-  'collect_special_instructions': ['booking_complete'],
+  'collect_special_instructions': ['collect_time_preference', 'booking_complete'],
+  'collect_time_preference': ['confirm_time_slot', 'collect_time_preference', 'manual_scheduling'],
+  'confirm_time_slot': ['booking_complete', 'collect_time_preference'],
   'booking_complete': ['general', 'ended', 'urgent_booking', 'collect_details'],
   'emergency': ['urgent_booking'],
   'urgent_booking': ['collect_details', 'booking_in_progress'],

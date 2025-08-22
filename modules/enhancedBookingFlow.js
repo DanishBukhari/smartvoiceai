@@ -63,6 +63,166 @@ async function handleBookingRequest(userInput) {
 }
 
 /**
+ * Proceed to booking with a pre-selected time slot
+ */
+async function proceedToBookingWithSlot(recommendedSlot) {
+  console.log('📅 Proceeding to booking with selected slot:', recommendedSlot);
+  
+  try {
+    // Generate appointment reference and complete slot details
+    const appointment = {
+      start: recommendedSlot.start,
+      end: recommendedSlot.end,
+      reference: generateAppointmentReference(),
+      type: 'customer_selected',
+      location: stateMachine.customerData?.address,
+      priority: 'standard',
+      estimatedDuration: recommendedSlot.duration || 75,
+      travelTime: '20-30 minutes',
+      travelMinutes: 25,
+      totalBuffer: 30,
+      analysis: { source: 'customer_preference' }
+    };
+    
+    // Store the appointment details
+    stateMachine.bookingDetails = {
+      reference: appointment.reference,
+      dateTime: appointment.start,
+      customer: stateMachine.customerData,
+      issue: stateMachine.currentIssue,
+      location: stateMachine.customerData?.address,
+      estimatedDuration: `${appointment.estimatedDuration} minutes`,
+      travelTime: appointment.travelTime,
+      priority: appointment.priority,
+      analysis: appointment.analysis
+    };
+    
+    // Generate confirmation response
+    const appointmentTime = new Date(appointment.start).toLocaleString('en-AU', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Australia/Brisbane',
+      hour12: true
+    });
+    
+    const formattedTime = new Date(appointment.start).toLocaleString('en-AU', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: 'Australia/Brisbane',
+      hour12: true
+    });
+    
+    transitionTo('booking_complete');
+    
+    // Try to create actual calendar appointment
+    try {
+      const { getAccessToken, createAppointment } = require('../outlook');
+      const accessToken = await getAccessToken();
+      
+      if (accessToken) {
+        const eventDetails = {
+          summary: `Plumbing Service - ${stateMachine.customerData?.name || 'Customer'}`,
+          location: stateMachine.customerData?.address || 'Customer Location',
+          description: `Customer: ${stateMachine.customerData?.name || 'N/A'}
+Phone: ${stateMachine.customerData?.phone || stateMachine.callerPhoneNumber || 'N/A'}
+Email: ${stateMachine.customerData?.email || 'N/A'}
+Issue: ${stateMachine.customerData?.issue || 'Plumbing service'}
+Special Instructions: ${stateMachine.customerData?.specialInstructions || 'None'}
+Time Preference: ${stateMachine.customerData?.timePreference || 'None specified'}
+Reference: ${appointment.reference}`,
+          start: {
+            dateTime: appointment.start.toISOString(),
+            timeZone: 'Australia/Brisbane',
+          },
+          end: {
+            dateTime: appointment.end.toISOString(),
+            timeZone: 'Australia/Brisbane',
+          },
+          attendees: [
+            { email: stateMachine.customerData?.email || 'noreply@usherfix.com' }
+          ]
+        };
+        
+        const calendarEvent = await createAppointment(accessToken, eventDetails);
+        if (calendarEvent && calendarEvent.id) {
+          appointment.calendarEventId = calendarEvent.id;
+          console.log('✅ Calendar appointment created successfully:', calendarEvent.id);
+        }
+      }
+    } catch (calendarError) {
+      console.log('⚠️ Calendar creation failed, continuing with booking confirmation:', calendarError.message);
+    }
+    
+    // Send confirmation email
+    try {
+      const phoneNumber = stateMachine.customerData?.phone || stateMachine.callerPhoneNumber;
+      
+      const emailBookingDetails = {
+        customerEmail: stateMachine.customerData?.email,
+        customerName: stateMachine.customerData?.name,
+        customerAddress: stateMachine.customerData?.address,
+        customerPhone: phoneNumber,
+        appointmentTime: appointment.start,
+        referenceNumber: appointment.reference,
+        issueDescription: stateMachine.customerData?.issue || 
+                         stateMachine.customerData?.issueDescription ||
+                         stateMachine.currentIssue?.description || 
+                         'Plumbing service',
+        specialInstructions: stateMachine.customerData?.specialInstructions || 'Standard plumbing service - no special requirements',
+        travelMinutes: appointment.travelTime,
+        totalBufferMinutes: appointment.totalBuffer || 0,
+        serviceDuration: appointment.estimatedDuration || 75
+      };
+      
+      await sendBookingConfirmationEmail(emailBookingDetails);
+      console.log('✅ Confirmation email sent successfully');
+      
+      // Update last booked job location for travel optimization
+      try {
+        const { updateLastBookedJobLocation } = require('./travelOptimization');
+        updateLastBookedJobLocation(stateMachine.customerData?.address);
+      } catch (travelOptError) {
+        console.log('⚠️ Could not update last booked job location:', travelOptError.message);
+      }
+      
+      // Set appointment booking flags
+      stateMachine.appointmentBooked = true;
+      stateMachine.appointmentId = appointment.calendarEventId || appointment.reference;
+      stateMachine.referenceNumber = appointment.reference;
+      console.log('📋 Appointment booking status updated');
+      
+    } catch (emailError) {
+      console.error('❌ Failed to send confirmation email:', emailError);
+      // Still mark as booked since the appointment slot was created
+      stateMachine.appointmentBooked = true;
+      stateMachine.appointmentId = appointment.calendarEventId || appointment.reference;
+      stateMachine.referenceNumber = appointment.reference;
+    }
+    
+    return `Perfect! I've scheduled your appointment for ${formattedTime}. ` +
+           `Your reference number is ${appointment.reference}. ` +
+           `Our plumber will arrive at ${stateMachine.customerData?.address} ` +
+           `and you'll receive a confirmation email at ${stateMachine.customerData?.email}. ` +
+           `Is there anything else I can help you with?`;
+           
+  } catch (error) {
+    console.error('proceedToBookingWithSlot error:', error);
+    transitionTo('manual_scheduling');
+    return "I apologize, but I'm having some technical difficulties completing your booking. " +
+           "Let me have our office call you back within the hour to confirm your appointment. " +
+           "Thank you for your patience.";
+  }
+}
+
+/**
  * Enhanced booking process with AI-powered smart scheduling
  */
 async function proceedToBooking(userInput = '') {
@@ -766,6 +926,7 @@ module.exports = {
   startDetailCollection,
   handleDetailCollection,
   proceedToBooking,
+  proceedToBookingWithSlot,
   findOptimalAppointmentSlot,
   generateAppointmentReference,
   extractDataFromInput

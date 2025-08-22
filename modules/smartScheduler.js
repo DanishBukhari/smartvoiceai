@@ -905,6 +905,7 @@ module.exports = {
   findOptimalAppointmentSlot,
   calculateOptimalSlotWithAI,
   calculateOptimalSlotTraditional,
+  getExistingAppointments,
   PRIORITY_LEVELS,
   JOB_KNOWLEDGE_BASE
 };
