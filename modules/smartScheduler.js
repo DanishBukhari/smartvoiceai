@@ -809,10 +809,10 @@ async function getExistingAppointments(accessToken) {
     // Use the existing Google Calendar integration from outlook.js
     const outlook = require('../outlook');
     
-    // Get events from Google Calendar for the next 30 days
+    // CRITICAL FIX: Extended date range to catch more appointments
     const now = new Date();
     const futureDate = new Date();
-    futureDate.setDate(now.getDate() + 30);
+    futureDate.setDate(now.getDate() + 60); // Extended to 60 days to catch more
     
     const { google } = require('googleapis');
     const { OAuth2Client } = require('google-auth-library');
@@ -828,25 +828,31 @@ async function getExistingAppointments(accessToken) {
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     const calendarId = process.env.GOOGLE_CALENDAR_ID || 'primary';
     
+    // CRITICAL FIX: Enhanced query with better parameters
     const response = await calendar.events.list({
       calendarId,
       timeMin: now.toISOString(),
       timeMax: futureDate.toISOString(),
-      maxResults: 100,
+      maxResults: 250, // Increased from 100 to catch more events
       singleEvents: true,
       orderBy: 'startTime',
+      showDeleted: false, // Explicitly exclude deleted events
       // Removed q filter - get all events and filter in code instead
     });
     
     const events = response.data.items || [];
     console.log(`📅 Raw calendar query returned ${events.length} events`);
     
-    // Debug: Show raw events
+    // CRITICAL FIX: Enhanced debugging - show ALL events first
     if (events.length > 0) {
       console.log('🔍 Raw events from calendar:');
-      events.slice(0, 3).forEach((event, index) => {
-        console.log(`   ${index + 1}. "${event.summary}" (${event.start?.dateTime || event.start?.date})`);
+      events.slice(0, 10).forEach((event, index) => {
+        const startTime = event.start?.dateTime || event.start?.date || 'No start time';
+        console.log(`   ${index + 1}. "${event.summary}" (${startTime})`);
       });
+      if (events.length > 10) {
+        console.log(`   ... and ${events.length - 10} more events`);
+      }
     }
     
     // Convert to our appointment format and filter for plumbing appointments
@@ -864,23 +870,29 @@ async function getExistingAppointments(accessToken) {
         
         const summary = event.summary.toLowerCase();
         
-        // Look for plumbing-related appointments
-        const isPlumbingRelated = summary.includes('plumbing') || 
-                                 summary.includes('plumber') ||
-                                 summary.includes('plb-') ||
-                                 summary.includes('service') ||
-                                 summary.includes('repair') ||
-                                 summary.includes('installation') ||
-                                 summary.includes('maintenance') ||
-                                 summary.includes('appointment');
+        // CRITICAL FIX: More comprehensive filtering for appointment-related events
+        const isAppointmentRelated = summary.includes('plumbing') || 
+                                   summary.includes('plumber') ||
+                                   summary.includes('plb-') ||
+                                   summary.includes('service') ||
+                                   summary.includes('repair') ||
+                                   summary.includes('installation') ||
+                                   summary.includes('maintenance') ||
+                                   summary.includes('appointment') ||
+                                   summary.includes('booking') ||
+                                   summary.includes('visit') ||
+                                   summary.includes('call') ||
+                                   summary.includes('hera') ||  // Customer names
+                                   summary.includes('assure fix');
         
-        if (isPlumbingRelated) {
+        if (isAppointmentRelated) {
           console.log(`   ✅ Found plumbing appointment: "${event.summary}"`);
         } else {
-          console.log(`   ❌ Filtered out (not plumbing): "${event.summary}"`);
+          // CRITICAL FIX: Show what we're filtering out for debugging
+          console.log(`   ❌ Filtered out (not appointment-related): "${event.summary}"`);
         }
         
-        return isPlumbingRelated;
+        return isAppointmentRelated;
       })
       .map(event => ({
         id: event.id,

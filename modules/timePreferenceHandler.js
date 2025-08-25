@@ -23,16 +23,65 @@ async function findAvailableSlots(timePreference, customerData = {}) {
     const { getExistingAppointments } = require('./smartScheduler');
     const existingAppointments = await getExistingAppointments();
     
+    // CRITICAL FIX: Debug appointments for the requested day
+    if (preference.dayPreference === 'today' || preference.dayPreference === 'tomorrow') {
+      const targetDate = new Date();
+      if (preference.dayPreference === 'tomorrow') {
+        targetDate.setDate(targetDate.getDate() + 1);
+      }
+      
+      const targetDateStr = targetDate.toDateString();
+      const appointmentsOnTargetDay = existingAppointments.filter(apt => {
+        return new Date(apt.start).toDateString() === targetDateStr;
+      });
+      
+      console.log(`🎯 Checking appointments specifically for ${preference.dayPreference.toUpperCase()} (${targetDateStr}):`);
+      if (appointmentsOnTargetDay.length > 0) {
+        appointmentsOnTargetDay.forEach((apt, i) => {
+          const time = new Date(apt.start).toLocaleString('en-AU', {
+            timeZone: 'Australia/Brisbane',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
+          console.log(`   ${i+1}. ${time} - ${apt.summary}`);
+        });
+      } else {
+        console.log(`   ✅ No existing appointments found for ${preference.dayPreference} - proceeding with slot generation`);
+      }
+    }
+    
     // Generate possible slots based on preference
     const possibleSlots = generateTimeSlots(preference);
-    
+
     // Filter out conflicting appointments
     const availableSlots = filterAvailableSlots(possibleSlots, existingAppointments);
-    
+
+    // CRITICAL FIX: Handle case where preferred day has no availability
+    if (availableSlots.length === 0 && (preference.dayPreference === 'today' || preference.dayPreference === 'tomorrow')) {
+      console.log(`❌ No available slots for ${preference.dayPreference.toUpperCase()}, generating alternative days`);
+      
+      // Generate slots for the next few days as alternatives
+      const alternativePreference = { ...preference };
+      alternativePreference.dayPreference = null; // Remove day restriction
+      
+      const alternativeSlots = generateTimeSlots(alternativePreference);
+      const filteredAlternatives = filterAvailableSlots(alternativeSlots, existingAppointments);
+      const sortedAlternatives = sortSlotsByPreference(filteredAlternatives, preference);
+      
+      console.log(`🔄 Found ${sortedAlternatives.length} alternative slots in the coming days`);
+      
+      return {
+        slots: sortedAlternatives.slice(0, 3),
+        preference,
+        needsClarification: false,
+        originalDayUnavailable: preference.dayPreference,
+        message: `Unfortunately, we don't have availability ${preference.dayPreference} ${preference.timeOfDay || 'afternoon'}. Here are the next available times:`
+      };
+    }
+
     // Sort by preference match and time
-    const sortedSlots = sortSlotsByPreference(availableSlots, preference);
-    
-    console.log(`✅ Found ${sortedSlots.length} available slots`);
+    const sortedSlots = sortSlotsByPreference(availableSlots, preference);    console.log(`✅ Found ${sortedSlots.length} available slots`);
     
     // CRITICAL FIX: Return specific time request information for better customer communication
     const result = { 
@@ -338,24 +387,10 @@ function generateDayTimeSlots(date, preference) {
     }
   }
   
-  // CRITICAL FIX: Proper date handling for Brisbane timezone
-  const now = new Date();
-  const brisbaneTime = new Date(now.toLocaleString("en-US", {timeZone: "Australia/Brisbane"}));
-  let targetDate;
-  
-  if (preference.dayPreference === 'today') {
-    // Use today's date in Brisbane timezone
-    targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate());
-    console.log('📅 Generating slots for TODAY:', targetDate.toDateString());
-  } else if (preference.dayPreference === 'tomorrow') {
-    // Use tomorrow's date in Brisbane timezone
-    targetDate = new Date(brisbaneTime.getFullYear(), brisbaneTime.getMonth(), brisbaneTime.getDate() + 1);
-    console.log('📅 Generating slots for TOMORROW:', targetDate.toDateString());
-  } else {
-    // Use the provided date, but normalize to Brisbane timezone
-    targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    console.log('📅 Generating slots for DATE:', targetDate.toDateString());
-  }
+  // CRITICAL FIX: Use the provided date parameter instead of recalculating
+  // This prevents double date calculation when called from generateTimeSlots
+  let targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  console.log('📅 Generating slots for:', targetDate.toDateString());
   
   hoursToGenerate.forEach(hour => {
     let minutesToGenerate;
@@ -432,15 +467,63 @@ function calculatePreferenceMatch(hour, preference, minute = 0) {
  * Filter slots to remove conflicts with existing appointments
  */
 function filterAvailableSlots(possibleSlots, existingAppointments) {
-  return possibleSlots.filter(slot => {
-    return !existingAppointments.some(existing => {
+  console.log(`🔍 Filtering ${possibleSlots.length} possible slots against ${existingAppointments.length} existing appointments`);
+  
+  const availableSlots = possibleSlots.filter(slot => {
+    const slotStart = new Date(slot.start);
+    const slotEnd = new Date(slot.end);
+    
+    const hasConflict = existingAppointments.some(existing => {
       const existingStart = new Date(existing.start);
       const existingEnd = new Date(existing.end);
       
       // Check for any overlap
-      return (slot.start < existingEnd && slot.end > existingStart);
+      const hasOverlap = (slotStart < existingEnd && slotEnd > existingStart);
+      
+      if (hasOverlap) {
+        // CRITICAL FIX: Enhanced conflict logging
+        const slotTime = slotStart.toLocaleString('en-AU', {
+          timeZone: 'Australia/Brisbane',
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+        const existingTime = existingStart.toLocaleString('en-AU', {
+          timeZone: 'Australia/Brisbane',
+          weekday: 'short',
+          day: 'numeric',
+          month: 'short',
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+        console.log(`❌ CONFLICT DETECTED: Slot ${slotTime} overlaps with existing appointment "${existing.summary}" at ${existingTime}`);
+      }
+      
+      return hasOverlap;
     });
+    
+    if (!hasConflict) {
+      const slotTime = slot.start.toLocaleString('en-AU', {
+        timeZone: 'Australia/Brisbane',
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      console.log(`✅ SLOT AVAILABLE: ${slotTime}`);
+    }
+    
+    return !hasConflict;
   });
+  
+  console.log(`📊 Conflict detection complete: ${availableSlots.length} of ${possibleSlots.length} slots available`);
+  return availableSlots;
 }
 
 /**

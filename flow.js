@@ -691,11 +691,29 @@ async function confirmTimeSlot(input) {
 async function collectSpecialInstructions(input) {
   console.log('📝 Collecting special instructions:', input);
   
-  // CRITICAL FIX: Check if this is actually address completion, not special instructions
+  // CRITICAL FIX: Only check for address completion if input actually looks like address completion
+  // Don't treat special instructions like access codes as address completion
   const currentData = stateMachine.customerData || {};
   
-  // If we have a partial address and input looks like postcode/suburb completion
-  if (currentData.address && !currentData.address.includes('QLD') && !currentData.address.includes('NSW')) {
+  // Check if this is actually special instructions (access codes, gate info, etc.)
+  const specialInstructionPatterns = [
+    /access\s*code/i,
+    /gate\s*code/i,
+    /entry\s*code/i,
+    /keypad/i,
+    /buzzer/i,
+    /intercom/i,
+    /key\s*under/i,
+    /garage/i,
+    /back\s*door/i,
+    /side\s*entrance/i,
+    /unit\s*number/i
+  ];
+  
+  const isSpecialInstruction = specialInstructionPatterns.some(pattern => pattern.test(input));
+  
+  // If we have a partial address and input looks like postcode/suburb completion (NOT special instructions)
+  if (!isSpecialInstruction && currentData.address && !currentData.address.includes('QLD') && !currentData.address.includes('NSW')) {
     const postcodePatterns = [
       /^([A-Za-z\s]+,?\s*[A-Z]{2,3}\s+\d{4})\.?$/i,  // "Biswin City, QLD 4000"
       /^([A-Z]{2,3}\s+\d{4})\.?$/i,                    // "QLD 4000"
