@@ -25,7 +25,16 @@ async function sendBookingConfirmationEmail(bookingDetails) {
     // Calculate and format travel time display
     const travelMinutesInput = bookingDetails.travelMinutes || '20-30 minutes';
     const totalBufferMinutes = bookingDetails.totalBufferMinutes || 0;
-    const serviceDuration = bookingDetails.serviceDuration || 60;
+    
+    // Calculate dynamic service duration if not provided
+    let serviceDuration = bookingDetails.serviceDuration;
+    if (!serviceDuration) {
+      const { calculateServiceDuration } = require('./modules/travelOptimization');
+      const issueDescription = bookingDetails.issueDescription || bookingDetails.issue || 'general plumbing';
+      serviceDuration = calculateServiceDuration(issueDescription);
+      console.log(`📧 Dynamic service duration calculated: ${serviceDuration} minutes for "${issueDescription}"`);
+    }
+    
     const jobCompletionBuffer = 30; // Standard 30-minute job completion buffer
     
     // Extract numeric minutes from travel time (if it's a string)

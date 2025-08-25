@@ -159,15 +159,54 @@ Guidelines:
       analysis = getBrisbaneFallbackTravel(originAddress, destinationAddress);
     }
     
-    // Ensure all values are properly defined
+    // Calculate dynamic travel estimates using enhanced travelOptimization with OpenAI fallback
+    const { calculateTravelTime, calculateTravelTimeWithOpenAI, extractMinutesFromTravelTime } = require('./travelOptimization');
+    let travelTimeEstimate = null;
+    let estimatedMinutes = 0;
+    
+    try {
+      // ALWAYS try to get intelligent travel estimate (Google Maps -> OpenAI -> Brisbane estimates)
+      const origin = 'Brisbane CBD, QLD 4000, Australia';
+      const destination = analysis.customerAddress || '';
+      
+      if (destination) {
+        console.log(`🤖 AI Scheduler calculating travel time: ${origin} → ${destination}`);
+        travelTimeEstimate = await calculateTravelTime(origin, destination);
+        estimatedMinutes = extractMinutesFromTravelTime(travelTimeEstimate);
+        console.log(`🤖 AI Scheduler travel result: ${travelTimeEstimate} (${estimatedMinutes} min)`);
+      } else {
+        throw new Error('No destination address provided for travel calculation');
+      }
+    } catch (error) {
+      console.log('⚠️ AI Scheduler primary travel calculation failed:', error.message);
+      
+      // Force OpenAI calculation as backup
+      try {
+        if (analysis.customerAddress) {
+          console.log('🤖 AI Scheduler forcing OpenAI calculation...');
+          travelTimeEstimate = await calculateTravelTimeWithOpenAI('Brisbane CBD, QLD 4000', analysis.customerAddress);
+          if (travelTimeEstimate) {
+            estimatedMinutes = extractMinutesFromTravelTime(travelTimeEstimate);
+            console.log(`🤖 AI Scheduler OpenAI result: ${travelTimeEstimate} (${estimatedMinutes} min)`);
+          } else {
+            throw new Error('OpenAI travel calculation failed');
+          }
+        }
+      } catch (openaiError) {
+        console.error('❌ AI Scheduler: All travel calculation methods failed:', openaiError.message);
+        throw new Error('Unable to calculate travel time - please check API configuration');
+      }
+    }
+    
+    // Ensure all values are properly defined with dynamic calculations
     const result = {
-      distanceKm: analysis.distanceKm || 15,
-      estimatedTravelMinutes: analysis.estimatedTravelMinutes || 25,
-      minTravelMinutes: analysis.minTravelMinutes || 20,
-      maxTravelMinutes: analysis.maxTravelMinutes || 35,
+      distanceKm: analysis.distanceKm || Math.ceil(estimatedMinutes / 2), // Rough estimate: 2 min per km
+      estimatedTravelMinutes: analysis.estimatedTravelMinutes || estimatedMinutes,
+      minTravelMinutes: analysis.minTravelMinutes || Math.max(10, estimatedMinutes - 5),
+      maxTravelMinutes: analysis.maxTravelMinutes || (estimatedMinutes + 10),
       routeType: analysis.routeType || 'mixed',
       trafficConcerns: analysis.trafficConcerns || 'Standard Brisbane traffic',
-      reasoning: analysis.reasoning || 'Standard Brisbane estimate'
+      reasoning: analysis.reasoning || `AI-powered travel estimate: ${travelTimeEstimate}`
     };
     
     console.log('🗺️ AI Location Analysis:', {

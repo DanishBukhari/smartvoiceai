@@ -3,9 +3,122 @@ const { getLastAppointment } = require('../outlook');
 
 // Global cache for travel time calculations
 const travelTimeCache = new Map();
-let lastBookedJobLocation = 'Brisbane CBD, QLD 4000, Australia'; // Default starting location
+let lastBookedJobLocation = null; // Will be dynamically determined
+let locationInitialized = false;
 
-async function calculateTravelTime(origin, destination) {
+/**
+ * Initialize the starting location from the most recent appointment
+ * This should be called at system startup or when needed
+ */
+async function initializeStartingLocation(accessToken = null) {
+  if (locationInitialized && lastBookedJobLocation) {
+    return lastBookedJobLocation;
+  }
+  
+  try {
+    if (accessToken) {
+      const lastAppointment = await getLastAppointment(accessToken, new Date());
+      if (lastAppointment && lastAppointment.location) {
+        lastBookedJobLocation = lastAppointment.location;
+        locationInitialized = true;
+        console.log(`🏠 Initialized starting location from calendar: ${lastBookedJobLocation}`);
+        return lastBookedJobLocation;
+      }
+    }
+  } catch (error) {
+    console.log('⚠️ Could not initialize from calendar:', error.message);
+  }
+  
+  // Fallback to Brisbane CBD
+  lastBookedJobLocation = 'Brisbane CBD, QLD 4000, Australia';
+  locationInitialized = true;
+  console.log(`🏠 Using default starting location: ${lastBookedJobLocation}`);
+  return lastBookedJobLocation;
+}
+
+/**
+ * Calculate travel time using OpenAI API as fallback
+ * This provides intelligent estimates when Google Maps API is unavailable
+ */
+async function calculateTravelTimeWithOpenAI(origin, destination) {
+  try {
+    // Check if OpenAI API key is available
+    if (!process.env.OPENAI_API_KEY) {
+      console.log('🤖 OpenAI API key not configured');
+      return null;
+    }
+
+    const { OpenAI } = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const prompt = `Calculate the driving travel time between these two locations in Brisbane, Australia:
+
+Origin: ${origin}
+Destination: ${destination}
+
+Consider:
+- Current time and typical Brisbane traffic patterns
+- Most likely driving route
+- Distance and road types
+- Brisbane's urban layout and geography
+
+Provide only the estimated travel time in format "X-Y minutes" (e.g., "15-25 minutes").
+If locations are very close (same building/street), respond with "5-10 minutes".
+If one location is unclear, make a reasonable Brisbane estimate.
+
+Response format: Just the time range, nothing else.`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: "You are a Brisbane travel time expert. Provide accurate driving time estimates between locations in Brisbane, Australia. Always respond with just the time range in 'X-Y minutes' format."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 50,
+      temperature: 0.3
+    });
+
+    const travelTime = response.choices[0]?.message?.content?.trim();
+    
+    if (travelTime && travelTime.includes('minutes')) {
+      // Cache the OpenAI result for 30 minutes
+      const cacheKey = `${origin}->${destination}`;
+      travelTimeCache.set(cacheKey, {
+        duration: travelTime,
+        timestamp: Date.now(),
+        source: 'openai'
+      });
+      
+      return travelTime;
+    }
+
+    console.log('🤖 OpenAI response format invalid:', travelTime);
+    return null;
+
+  } catch (error) {
+    console.log('🤖 OpenAI travel calculation failed:', error.message);
+    return null;
+  }
+}
+
+async function calculateTravelTime(origin, destination, accessToken = null) {
+  // Ensure we have a proper origin
+  if (!origin || origin === 'null' || origin === 'undefined') {
+    origin = await initializeStartingLocation(accessToken);
+  }
+  
+  // Ensure destination is valid
+  if (!destination || typeof destination !== 'string') {
+    console.log('⚠️ Invalid destination for travel time calculation');
+    return '20-30 minutes';
+  }
+  
   const cacheKey = `${origin}->${destination}`;
   
   // Check cache first
@@ -20,7 +133,14 @@ async function calculateTravelTime(origin, destination) {
   try {
     // Check if Google Maps API key is available
     if (!process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY === 'your_google_maps_api_key_here') {
-      console.log('🗺️ Google Maps API key not configured, using Brisbane estimates');
+      console.log('🗺️ Google Maps API key not configured, trying OpenAI API');
+      const openaiTravelTime = await calculateTravelTimeWithOpenAI(origin, destination);
+      if (openaiTravelTime) {
+        console.log(`🤖 Using OpenAI travel estimate: ${openaiTravelTime}`);
+        return openaiTravelTime;
+      }
+      
+      console.log('🗺️ OpenAI API also unavailable, using Brisbane estimates');
       const fallbackTime = estimateBrisbaneTravelTime(origin, destination);
       console.log(`🚗 Using Brisbane geographic estimate: ${fallbackTime}`);
       return fallbackTime;
@@ -44,9 +164,16 @@ async function calculateTravelTime(origin, destination) {
       const errorMsg = data.error_message || 'API request denied';
       console.log(`🗺️ Google Maps API error: ${errorMsg}`);
       
-      // If it's a billing error or request denied, fall back to Brisbane estimates
+      // If it's a billing error or request denied, fall back to OpenAI
       if (errorMsg.includes('billing') || errorMsg.includes('Billing') || data.status === 'REQUEST_DENIED') {
-        console.log('💳 Google Maps API billing not enabled or access denied, using Brisbane estimates');
+        console.log('💳 Google Maps API billing not enabled, trying OpenAI API');
+        const openaiTravelTime = await calculateTravelTimeWithOpenAI(origin, destination);
+        if (openaiTravelTime) {
+          console.log(`🤖 Using OpenAI travel estimate: ${openaiTravelTime}`);
+          return openaiTravelTime;
+        }
+        
+        console.log('🗺️ OpenAI API also failed, using Brisbane estimates');
         const fallbackTime = estimateBrisbaneTravelTime(origin, destination);
         console.log(`🚗 Using Brisbane geographic estimate: ${fallbackTime}`);
         return fallbackTime;
@@ -73,9 +200,20 @@ async function calculateTravelTime(origin, destination) {
   } catch (error) {
     console.error('Travel time calculation failed:', error);
     
-    // Fallback to Brisbane distance estimates
+    // Try OpenAI API as first fallback
+    try {
+      const openaiTravelTime = await calculateTravelTimeWithOpenAI(origin, destination);
+      if (openaiTravelTime) {
+        console.log(`🤖 Using OpenAI fallback travel estimate: ${openaiTravelTime}`);
+        return openaiTravelTime;
+      }
+    } catch (openaiError) {
+      console.log('🤖 OpenAI API also failed:', openaiError.message);
+    }
+    
+    // Final fallback to Brisbane distance estimates
     const fallbackTime = estimateBrisbaneTravelTime(origin, destination);
-    console.log(`🚗 Using fallback travel time: ${fallbackTime}`);
+    console.log(`🚗 Using final fallback travel time: ${fallbackTime}`);
     return fallbackTime;
   }
 }
@@ -115,6 +253,9 @@ async function findMostEfficientSlot(accessToken, customerAddress, issueDescript
   try {
     console.log('🎯 Finding most efficient appointment slot...');
     
+    // Always ensure we have the latest starting location
+    await initializeStartingLocation(accessToken);
+    
     // Set default earliest time if not provided
     if (!earliestTime) {
       earliestTime = new Date();
@@ -135,18 +276,20 @@ async function findMostEfficientSlot(accessToken, customerAddress, issueDescript
     console.log(`📍 Starting location: ${startLocation}`);
     console.log(`📍 Customer location: ${customerAddress}`);
     
-    // Calculate travel time
-    const travelTime = await calculateTravelTime(startLocation, customerAddress);
+    // Calculate travel time with access token for proper origin handling
+    const travelTime = await calculateTravelTime(startLocation, customerAddress, accessToken);
     const travelMinutes = extractMinutesFromTravelTime(travelTime);
     
     // Calculate service duration based on issue type
     const serviceDuration = calculateServiceDuration(issueDescription);
     
-    // Total buffer: job completion (30 min) + travel time + service duration
-    const totalBuffer = 30 + travelMinutes + serviceDuration;
+    // Dynamic buffer calculation instead of hardcoded 30 minutes
+    const dynamicBuffer = calculateDynamicBuffer(issueDescription, serviceDuration);
+    const totalBuffer = dynamicBuffer + travelMinutes + serviceDuration;
     
     console.log(`⏱️ Travel time: ${travelTime} (${travelMinutes} minutes)`);
     console.log(`🔧 Service duration: ${serviceDuration} minutes`);
+    console.log(`🛡️ Dynamic buffer: ${dynamicBuffer} minutes`);
     console.log(`⏰ Total buffer needed: ${totalBuffer} minutes`);
     
     // Find next available slot with buffer
@@ -154,7 +297,7 @@ async function findMostEfficientSlot(accessToken, customerAddress, issueDescript
     
     if (nextSlot) {
       // Update last booked location for next calculation
-      lastBookedJobLocation = customerAddress;
+      updateLastBookedJobLocation(customerAddress);
       console.log(`📍 Setting next starting location to: ${customerAddress}`);
       
       return {
@@ -174,25 +317,110 @@ async function findMostEfficientSlot(accessToken, customerAddress, issueDescript
 }
 
 function calculateServiceDuration(issueDescription) {
+  if (!issueDescription || typeof issueDescription !== 'string') {
+    return 60; // Default 1 hour for undefined issues
+  }
+  
   const issue = issueDescription.toLowerCase();
   
-  // Emergency jobs take longer
-  if (issue.includes('burst') || issue.includes('flood') || issue.includes('emergency')) {
+  // Emergency/urgent jobs require immediate response and longer resolution time
+  if (issue.includes('burst') || issue.includes('flood') || issue.includes('emergency') || 
+      issue.includes('water everywhere') || issue.includes('urgent') || issue.includes('leak bad')) {
     return 90; // 1.5 hours for emergencies
   }
   
-  // Hot water system issues typically take longer
-  if (issue.includes('hot water') || issue.includes('water heater')) {
-    return 75; // 1.25 hours
+  // Major installations and replacements
+  if (issue.includes('install') || issue.includes('replace') || issue.includes('new') || 
+      issue.includes('renovation') || issue.includes('upgrade')) {
+    return 120; // 2 hours for installations
   }
   
-  // Installation and major repairs
-  if (issue.includes('install') || issue.includes('replace') || issue.includes('new')) {
-    return 120; // 2 hours
+  // Hot water system issues typically complex
+  if (issue.includes('hot water') || issue.includes('water heater') || issue.includes('boiler') ||
+      issue.includes('gas') || issue.includes('electric hot water')) {
+    return 75; // 1.25 hours for hot water systems
   }
   
-  // Standard repairs (toilet, tap, minor leaks)
-  return 60; // 1 hour for standard jobs
+  // Drain and sewer issues can be complex
+  if (issue.includes('drain') || issue.includes('sewer') || issue.includes('blocked') ||
+      issue.includes('pipe') || issue.includes('clog')) {
+    return 75; // 1.25 hours for drainage issues
+  }
+  
+  // Toilet repairs vary by complexity
+  if (issue.includes('toilet')) {
+    if (issue.includes('new') || issue.includes('install') || issue.includes('replace')) {
+      return 90; // 1.5 hours for toilet replacement
+    } else if (issue.includes('repair') || issue.includes('fix') || issue.includes('broken')) {
+      return 60; // 1 hour for toilet repairs
+    } else {
+      return 45; // 45 minutes for simple toilet issues
+    }
+  }
+  
+  // Tap/faucet issues usually quicker
+  if (issue.includes('tap') || issue.includes('faucet') || issue.includes('drip')) {
+    if (issue.includes('new') || issue.includes('install') || issue.includes('replace')) {
+      return 60; // 1 hour for tap replacement
+    } else {
+      return 30; // 30 minutes for tap repairs
+    }
+  }
+  
+  // Leak repairs depend on complexity
+  if (issue.includes('leak') || issue.includes('leaking')) {
+    if (issue.includes('wall') || issue.includes('ceiling') || issue.includes('hidden')) {
+      return 90; // 1.5 hours for complex leak detection
+    } else {
+      return 60; // 1 hour for standard leaks
+    }
+  }
+  
+  // Maintenance and inspections
+  if (issue.includes('maintenance') || issue.includes('inspection') || issue.includes('check') ||
+      issue.includes('service')) {
+    return 45; // 45 minutes for maintenance
+  }
+  
+  // Multiple issues mentioned
+  const issueCount = (issue.match(/\band\b|\bplus\b|\balso\b|\badditionally\b/g) || []).length;
+  if (issueCount > 0) {
+    return 90 + (issueCount * 30); // Base 90 min + 30 min per additional issue
+  }
+  
+  // Default for unspecified general plumbing work
+  return 60; // 1 hour standard
+}
+
+/**
+ * Calculate dynamic buffer time based on job complexity
+ * @param {string} issueDescription - Description of the plumbing issue
+ * @param {number} serviceDuration - Calculated service duration in minutes
+ * @returns {number} Buffer time in minutes
+ */
+function calculateDynamicBuffer(issueDescription = '', serviceDuration = 60) {
+  const issue = issueDescription.toLowerCase();
+  
+  // Base buffer time varies by complexity
+  let baseBuffer = 20; // Minimum buffer
+  
+  if (issue.includes('emergency') || issue.includes('leak') || issue.includes('burst')) {
+    baseBuffer = 45; // Emergency jobs need more buffer
+  } else if (issue.includes('install') || issue.includes('replacement') || issue.includes('renovation')) {
+    baseBuffer = 40; // Installation jobs need extra time
+  } else if (issue.includes('repair') || issue.includes('fix')) {
+    baseBuffer = 30; // Standard repair buffer
+  } else if (issue.includes('maintenance') || issue.includes('inspection')) {
+    baseBuffer = 25; // Routine work needs less buffer
+  }
+  
+  // Add complexity-based buffer (10-15% of service duration)
+  const complexityBuffer = Math.ceil(serviceDuration * 0.125);
+  
+  const totalBuffer = baseBuffer + complexityBuffer;
+  console.log(`🛡️ Dynamic buffer calculation: Base(${baseBuffer}) + Complexity(${complexityBuffer}) = ${totalBuffer} minutes`);
+  
+  return totalBuffer;
 }
 
 function extractMinutesFromTravelTime(travelTimeString) {
@@ -301,17 +529,22 @@ async function refreshLastBookedJobLocation(accessToken) {
     const lastAppointment = await getLastAppointment(accessToken, new Date());
     if (lastAppointment && lastAppointment.location) {
       lastBookedJobLocation = lastAppointment.location;
+      locationInitialized = true;
       console.log(`🔄 Refreshed last booked job location from calendar: ${lastBookedJobLocation}`);
       return lastBookedJobLocation;
+    } else {
+      // If no appointments found, ensure we still have a default
+      return await initializeStartingLocation(accessToken);
     }
   } catch (error) {
     console.log('⚠️ Could not refresh last booked job location from calendar:', error.message);
+    return await initializeStartingLocation(accessToken);
   }
-  return lastBookedJobLocation;
 }
 
 module.exports = {
   calculateTravelTime,
+  calculateTravelTimeWithOpenAI,
   findMostEfficientSlot,
   calculateServiceDuration,
   extractMinutesFromTravelTime,
@@ -319,5 +552,7 @@ module.exports = {
   estimateBrisbaneTravelTime,
   updateLastBookedJobLocation,
   getLastBookedJobLocation,
-  refreshLastBookedJobLocation
+  refreshLastBookedJobLocation,
+  initializeStartingLocation,
+  calculateDynamicBuffer
 };

@@ -70,18 +70,90 @@ async function proceedToBookingWithSlot(recommendedSlot) {
   
   try {
     // Generate appointment reference and complete slot details
+    // Calculate dynamic travel time and service duration
+    const customerAddress = stateMachine.customerData?.address;
+    const issueType = stateMachine.customerData?.issue || 'general plumbing';
+    
+    let dynamicTravelTime = null;
+    let dynamicTravelMinutes = 0;
+    let dynamicServiceDuration = null;
+    let dynamicTotalBuffer = null;
+    
+    // ALWAYS try to get dynamic calculations - no hardcoded fallbacks
+    try {
+      if (typeof outlook.getAccessToken === 'function') {
+        const accessToken = await outlook.getAccessToken();
+        if (accessToken && customerAddress) {
+          const travelOptimization = require('./travelOptimization');
+          
+          // Get last booked location dynamically
+          await travelOptimization.refreshLastBookedJobLocation(accessToken);
+          const lastLocation = travelOptimization.getLastBookedJobLocation();
+          
+          // ALWAYS calculate real travel time using OpenAI/Google Maps - no defaults
+          dynamicTravelTime = await travelOptimization.calculateTravelTime(lastLocation, customerAddress);
+          dynamicTravelMinutes = travelOptimization.extractMinutesFromTravelTime(dynamicTravelTime);
+          
+          // ALWAYS calculate dynamic service duration - no defaults
+          dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueType);
+          
+          // Calculate total buffer: completion buffer + travel + service
+          dynamicTotalBuffer = 30 + dynamicTravelMinutes + dynamicServiceDuration;
+          
+          console.log(`🎯 Dynamic calculations - Travel: ${dynamicTravelTime}, Service: ${dynamicServiceDuration}min, Buffer: ${dynamicTotalBuffer}min`);
+        }
+      }
+    } catch (error) {
+      console.log('⚠️ Dynamic calculation failed:', error.message);
+      // If everything fails, we must still calculate - force OpenAI calculation
+      const travelOptimization = require('./travelOptimization');
+      if (customerAddress) {
+        try {
+          // Force OpenAI calculation as last resort
+          dynamicTravelTime = await travelOptimization.calculateTravelTimeWithOpenAI('Brisbane CBD, QLD 4000', customerAddress);
+          if (!dynamicTravelTime) {
+            // Only if OpenAI completely fails, use Brisbane estimates
+            dynamicTravelTime = travelOptimization.estimateBrisbaneTravelTime('Brisbane CBD, QLD 4000', customerAddress);
+          }
+          dynamicTravelMinutes = travelOptimization.extractMinutesFromTravelTime(dynamicTravelTime);
+          dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueType);
+          dynamicTotalBuffer = travelOptimization.calculateDynamicBuffer(issueType, dynamicServiceDuration) + dynamicTravelMinutes + dynamicServiceDuration;
+          console.log(`🤖 Forced OpenAI/Brisbane calculation - Travel: ${dynamicTravelTime}, Service: ${dynamicServiceDuration}min`);
+        } catch (forceError) {
+          console.error('❌ All calculation methods failed:', forceError.message);
+          // This should never happen, but if it does, we need some values
+          throw new Error('Unable to calculate travel time or service duration');
+        }
+      }
+    }
+
+    // Ensure service duration is ALWAYS calculated - no defaults allowed
+    if (!dynamicServiceDuration || dynamicServiceDuration === null) {
+      console.log('🔧 Forcing service duration calculation...');
+      dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueType);
+      console.log(`🔧 Service duration calculated: ${dynamicServiceDuration} minutes for ${issueType}`);
+    }
+
+    // Ensure buffer is ALWAYS calculated dynamically - no hardcoded values
+    if (!dynamicTotalBuffer || dynamicTotalBuffer === null) {
+      console.log('🛡️ Forcing dynamic buffer calculation...');
+      const buffer = travelOptimization.calculateDynamicBuffer(issueType, dynamicServiceDuration);
+      dynamicTotalBuffer = buffer + dynamicTravelMinutes + dynamicServiceDuration;
+      console.log(`🛡️ Total buffer calculated: ${dynamicTotalBuffer} minutes (${buffer} + ${dynamicTravelMinutes} + ${dynamicServiceDuration})`);
+    }
+
     const appointment = {
       start: recommendedSlot.start,
       end: recommendedSlot.end,
       reference: generateAppointmentReference(),
       type: 'customer_selected',
-      location: stateMachine.customerData?.address,
+      location: customerAddress,
       priority: 'standard',
-      estimatedDuration: recommendedSlot.duration || 75,
-      travelTime: '20-30 minutes',
-      travelMinutes: 25,
-      totalBuffer: 30,
-      analysis: { source: 'customer_preference' }
+      estimatedDuration: dynamicServiceDuration,
+      travelTime: dynamicTravelTime,
+      travelMinutes: dynamicTravelMinutes,
+      totalBuffer: dynamicTotalBuffer,
+      analysis: { source: 'customer_preference', dynamicCalculation: true }
     };
     
     // Store the appointment details
@@ -538,8 +610,12 @@ async function tryExternalCalendarIntegration(customerAddress, issueType, priori
         // Convert external result to proper appointment format
         if (externalResult && externalResult.slot) {
           // Extract numeric minutes from travel time string for calculations
-          const { extractMinutesFromTravelTime } = require('./travelOptimization');
+          const { extractMinutesFromTravelTime, calculateServiceDuration, updateLastBookedJobLocation } = require('./travelOptimization');
           const travelMinutes = extractMinutesFromTravelTime(externalResult.travelTime);
+          const dynamicServiceDuration = calculateServiceDuration(issueType);
+          
+          // Update last booked location for future calculations
+          updateLastBookedJobLocation(customerAddress);
           
           return {
             start: externalResult.slot.start,
@@ -550,8 +626,10 @@ async function tryExternalCalendarIntegration(customerAddress, issueType, priori
             priority: priority,
             travelTime: externalResult.travelTime, // Keep string version for display
             travelMinutes: travelMinutes, // Add numeric version for calculations
-            serviceDuration: externalResult.serviceDuration || 60,
-            totalBuffer: externalResult.totalBuffer || 0
+            serviceDuration: dynamicServiceDuration, // Use dynamic calculation
+            totalBuffer: externalResult.totalBuffer || (travelOptimization.calculateDynamicBuffer(issueType, dynamicServiceDuration) + travelMinutes + dynamicServiceDuration),
+            estimatedDuration: dynamicServiceDuration,
+            analysis: { source: 'travel_optimized', dynamicCalculation: true }
           };
         }
       }

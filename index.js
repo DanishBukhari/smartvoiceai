@@ -1029,4 +1029,15 @@ app.post('/test-email', async (req, res) => {
 
 // Start server
 const port = process.env.PORT || 3000;
-server.listen(port, () => console.log(`🚀 Server started on ${port}`));
+server.listen(port, async () => {
+  console.log(`🚀 Server started on ${port}`);
+  
+  // Initialize travel optimization system
+  try {
+    const { initializeStartingLocation } = require('./modules/travelOptimization');
+    await initializeStartingLocation();
+    console.log('✅ Travel optimization system initialized');
+  } catch (error) {
+    console.log('⚠️ Could not initialize travel optimization:', error.message);
+  }
+});

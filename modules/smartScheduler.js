@@ -522,7 +522,7 @@ async function calculateOptimalSlotTraditional({ customerAddress, jobAnalysis, n
   // Fallback to basic scheduling if no optimal slot found
   console.log('⚠️ No optimal slot found, using fallback scheduling');
   console.log(`⚠️ bestSlot was: ${bestSlot ? 'found but invalid' : 'null'}, bestScore: ${bestScore}`);
-  const fallbackResult = generateFallbackSlot(earliestStart, jobAnalysis, customerAddress);
+  const fallbackResult = await generateFallbackSlot(earliestStart, jobAnalysis, customerAddress);
   console.log(`⚠️ Fallback appointment time: ${fallbackResult.start.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane', hour: 'numeric', minute: '2-digit', hour12: true })}`);
   return fallbackResult;
 }
@@ -877,11 +877,57 @@ async function getLastAppointmentBeforeSlot(slotStart, appointments, accessToken
   return beforeSlot.sort((a, b) => b.end - a.end)[0];
 }
 
-function generateFallbackSlot(earliestStart, jobAnalysis, customerAddress) {
+async function generateFallbackSlot(earliestStart, jobAnalysis, customerAddress) {
   const start = new Date(earliestStart);
   const end = new Date(start);
   end.setMinutes(end.getMinutes() + jobAnalysis.estimatedDuration + 15);
   
+  // Calculate dynamic travel time and service duration - NO HARDCODED VALUES
+  const travelOptimization = require('./travelOptimization');
+  let dynamicTravelTime = null;
+  let dynamicTravelMinutes = 0;
+  let dynamicServiceDuration = jobAnalysis.estimatedDuration;
+  
+  try {
+    // ALWAYS try to calculate real travel time using OpenAI/Google Maps first
+    if (typeof outlook.getAccessToken === 'function') {
+      const accessToken = await outlook.getAccessToken();
+      if (accessToken && customerAddress) {
+        // Refresh last location
+        await travelOptimization.refreshLastBookedJobLocation(accessToken);
+        const lastLocation = travelOptimization.getLastBookedJobLocation();
+        
+        // Calculate dynamic travel time - no defaults
+        dynamicTravelTime = await travelOptimization.calculateTravelTime(lastLocation, customerAddress);
+        dynamicTravelMinutes = travelOptimization.extractMinutesFromTravelTime(dynamicTravelTime);
+        
+        console.log(`🚗 Smart scheduler dynamic travel calculation: ${dynamicTravelTime} (${dynamicTravelMinutes} minutes)`);
+      }
+    }
+    
+    // If no access token or address, force OpenAI calculation
+    if (!dynamicTravelTime && customerAddress) {
+      console.log('🤖 Smart scheduler forcing OpenAI travel calculation...');
+      dynamicTravelTime = await travelOptimization.calculateTravelTimeWithOpenAI('Brisbane CBD, QLD 4000', customerAddress);
+      if (!dynamicTravelTime) {
+        // Only use Brisbane estimates if OpenAI completely fails
+        dynamicTravelTime = travelOptimization.estimateBrisbaneTravelTime('Brisbane CBD, QLD 4000', customerAddress);
+        console.log('📍 Smart scheduler using Brisbane geographic estimate as last resort');
+      }
+      dynamicTravelMinutes = travelOptimization.extractMinutesFromTravelTime(dynamicTravelTime);
+    }
+    
+    // Always calculate service duration dynamically
+    const issueDescription = jobAnalysis.description || jobAnalysis.issue || 'general plumbing';
+    dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueDescription);
+    
+    console.log(`📊 Smart scheduler final calculations: Travel=${dynamicTravelTime}, Service=${dynamicServiceDuration}min`);
+    
+  } catch (error) {
+    console.log('❌ Smart scheduler calculation failed completely:', error.message);
+    throw new Error(`Unable to calculate travel time for ${customerAddress}. Please ensure OpenAI API is configured.`);
+  }
+
   // Generate a proper reference number
   const refNumber = `PLB-${Math.random().toString(36).substr(2, 4).toUpperCase()}-${Date.now().toString().slice(-6)}-${Math.floor(Math.random() * 1000)}`;
   
@@ -890,13 +936,13 @@ function generateFallbackSlot(earliestStart, jobAnalysis, customerAddress) {
     end,
     type: 'fallback',
     priority: jobAnalysis.priority,
-    estimatedDuration: jobAnalysis.estimatedDuration,
-    travelTime: '20-30 minutes',
-    travelMinutes: 25,
+    estimatedDuration: dynamicServiceDuration,
+    travelTime: dynamicTravelTime,
+    travelMinutes: dynamicTravelMinutes,
     location: customerAddress,
-    analysis: jobAnalysis,
+    analysis: { ...jobAnalysis, dynamicCalculation: true },
     reference: refNumber,
-    serviceDuration: jobAnalysis.estimatedDuration
+    serviceDuration: dynamicServiceDuration
   };
 }
 
