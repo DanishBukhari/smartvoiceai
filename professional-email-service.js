@@ -60,36 +60,37 @@ async function sendBookingConfirmationEmail(bookingDetails) {
     // Format travel time for display
     const formatTravelTime = (travelInput) => {
       if (typeof travelInput === 'string' && travelInput.includes('-')) {
-        return travelInput; // Keep original range format
+        // Remove duplicate 'minutes' if present
+        return travelInput.replace(/minutes\s+minutes?/g, 'minutes');
       }
       const minutes = extractTravelMinutes(travelInput);
-      if (minutes <= 15) return `${minutes} minutes`;
-      if (minutes <= 30) return `${minutes} minutes`;
-      if (minutes <= 60) return `${minutes} minutes`;
-      return `${Math.round(minutes)} minutes`;
+      return `${minutes} minutes`;
     };
     
-    // Format total time estimation
-    const formatTotalEstimation = (totalBuffer, serviceTime, travelMins) => {
-      if (totalBuffer > 0 && travelMins > 0) {
-        return `${totalBuffer} minutes total (${serviceTime} min service + ${travelMins} min travel)`;
-      }
+    // Format total time estimation with buffer breakdown
+    const formatTotalEstimation = (totalBuffer, serviceTime, travelInput, bookingDetails) => {
+      // Calculate buffer time
+      const bufferTime = totalBuffer > 0 ? Math.max(0, totalBuffer - serviceTime - extractTravelMinutes(travelInput)) : 0;
       
-      // Use actual service time if available
-      if (serviceTime && serviceTime > 0) {
-        const hours = Math.round(serviceTime / 60 * 10) / 10; // Round to 1 decimal
-        if (hours <= 1) {
-          return `${serviceTime} minutes`;
-        } else if (hours <= 1.5) {
-          return `1-1.5 hours`;
-        } else if (hours <= 2) {
-          return `1.5-2 hours`;
+      if (totalBuffer > 0 && serviceTime > 0) {
+        // Format travel display for breakdown
+        const travelDisplay = typeof travelInput === 'string' && travelInput.includes('-') 
+          ? travelInput.replace(/\s*minutes?/g, '') + ' min'  // "20-30 min"
+          : `${extractTravelMinutes(travelInput)} min`;
+        
+        if (bufferTime > 0) {
+          return `${totalBuffer} minutes total (${serviceTime} min service + ${travelDisplay} travel + ${bufferTime} min buffer)`;
         } else {
-          return `${hours} hours`;
+          return `${totalBuffer} minutes total (${serviceTime} min service + ${travelDisplay} travel)`;
         }
       }
       
-      return '1-2 hours'; // Fallback only when no service time available
+      // Fallback to service time only
+      if (serviceTime && serviceTime > 0) {
+        return `${serviceTime} minutes`;
+      }
+      
+      return '60-90 minutes';
     };
 
     // Prepare template parameters for the professional HTML template
@@ -102,7 +103,7 @@ async function sendBookingConfirmationEmail(bookingDetails) {
       
       // Service Details
       issue_description: bookingDetails.issueDescription || 'General plumbing service',
-      estimated_duration: formatTotalEstimation(totalBufferMinutes, serviceDuration, travelMinutes),
+      estimated_duration: formatTotalEstimation(totalBufferMinutes, serviceDuration, travelMinutesInput, bookingDetails),
       travel_time: formatTravelTime(travelMinutesInput),
       total_buffer_minutes: totalBufferMinutes > 0 ? `${totalBufferMinutes} minutes` : 'Calculating...',
       job_completion_buffer: `${serviceDuration} minutes`,

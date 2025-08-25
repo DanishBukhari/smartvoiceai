@@ -1,0 +1,186 @@
+<!-- UPDATED EMAIL TEMPLATE - Copy this ENTIRE HTML template into EmailJS -->
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plumbing Service Appointment - Usher Fix Plumbing</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: system-ui, sans-serif, Arial; background-color: #f5f5f5;">
+
+<div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; padding: 20px;">
+    
+    <!-- Header -->
+    <div style="text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #2c5aa0;">
+        <h1 style="color: #2c5aa0; margin: 0; font-size: 24px;">🔧 Usher Fix Plumbing</h1>
+        <p style="color: #666; margin: 5px 0 0 0; font-size: 16px;">Professional Plumbing Services Brisbane</p>
+    </div>
+    
+    <!-- Confirmation Message -->
+    <div style="text-align: center; background-color: #e8f5e8; border-radius: 8px; padding: 20px; margin-bottom: 30px;">
+        <h2 style="color: #4caf50; margin: 0 0 10px 0; font-size: 20px;">✅ Plumbing Service Appointment Confirmed!</h2>
+        <p style="color: #333; margin: 0; font-size: 16px;">Your appointment has been successfully scheduled. Please review the details below.</p>
+    </div>
+    
+    <!-- Customer Details Section -->
+    <div style="background-color: #f8f9fa; border-radius: 8px; padding: 25px; margin: 25px 0; border-left: 4px solid #2c5aa0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #2c5aa0; margin-top: 0; font-size: 18px; margin-bottom: 20px;">👤 Customer Details:</h3>
+        
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 10px 0; font-weight: bold; color: #555; width: 120px; vertical-align: top;">• Name:</td>
+                <td style="padding: 10px 0; color: #333; font-weight: 500;">{{customer_name}}</td>
+            </tr>
+            <tr style="background-color: rgba(44, 90, 160, 0.05);">
+                <td style="padding: 10px 0; font-weight: bold; color: #555; vertical-align: top;">• Phone:</td>
+                <td style="padding: 10px 0; color: #333;">{{customer_phone}}</td>
+            </tr>
+            <tr>
+                <td style="padding: 10px 0; font-weight: bold; color: #555; vertical-align: top;">• Email:</td>
+                <td style="padding: 10px 0; color: #333;">{{to_email}}</td>
+            </tr>
+            <tr style="background-color: rgba(44, 90, 160, 0.05);">
+                <td style="padding: 10px 0; font-weight: bold; color: #555; vertical-align: top;">• Address:</td>
+                <td style="padding: 10px 0; color: #333;">{{customer_address}}</td>
+            </tr>
+        </table>
+    </div>
+    
+    <!-- Service Details Section -->
+    <div style="background-color: #f0f8ff; border-radius: 8px; padding: 25px; margin: 25px 0; border-left: 4px solid #4caf50; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #2c5aa0; margin-top: 0; font-size: 18px; margin-bottom: 20px;">🔧 Service Details:</h3>
+        
+        <!-- Issue Description Card -->
+        <div style="background-color: white; border-radius: 6px; padding: 15px; margin-bottom: 15px; border-left: 3px solid #ff9800;">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span style="font-size: 20px; margin-right: 10px;">🚰</span>
+                <strong style="color: #555; font-size: 14px;">ISSUE REPORTED:</strong>
+            </div>
+            <div style="color: #333; font-size: 16px; font-weight: 500;">{{issue_description}}</div>
+        </div>
+        
+        <!-- Time Breakdown Cards -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+            <tr>
+                <!-- Service Duration Card -->
+                <td style="width: 50%; padding-right: 5px; vertical-align: top;">
+                    <div style="background-color: #e8f5e8; border-radius: 6px; padding: 15px; border-left: 3px solid #4caf50; height: 100%;">
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-size: 18px; margin-right: 8px;">⏱️</span>
+                            <strong style="color: #2e7d32; font-size: 13px;">SERVICE TIME:</strong>
+                        </div>
+                        <div style="color: #2e7d32; font-size: 15px; font-weight: 600;">{{estimated_duration}}</div>
+                    </div>
+                </td>
+                
+                <!-- Travel Time Card -->
+                <td style="width: 50%; padding-left: 5px; vertical-align: top;">
+                    <div style="background-color: #e3f2fd; border-radius: 6px; padding: 15px; border-left: 3px solid #2196f3; height: 100%;">
+                        <div style="margin-bottom: 8px;">
+                            <span style="font-size: 18px; margin-right: 8px;">🚗</span>
+                            <strong style="color: #1976d2; font-size: 13px;">TRAVEL TIME:</strong>
+                        </div>
+                        <div style="color: #1976d2; font-size: 15px; font-weight: 600;">{{travel_time}}</div>
+                    </div>
+                </td>
+            </tr>
+        </table>
+        
+        <!-- Service Promise -->
+        <div style="background-color: #fff3e0; border-radius: 6px; padding: 15px; border-left: 3px solid #ff9800;">
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span style="font-size: 18px; margin-right: 8px;">✅</span>
+                <strong style="color: #f57c00; font-size: 13px;">OUR COMMITMENT:</strong>
+            </div>
+            <div style="color: #ef6c00; font-size: 14px; line-height: 1.5;">
+                Professional service with upfront pricing • Quality parts & tools included • Same-day completion when possible
+            </div>
+        </div>
+    </div>
+    
+    <!-- Appointment Details Section -->
+    <div style="background-color: #fff3cd; border-radius: 8px; padding: 25px; margin: 25px 0; border-left: 4px solid #ffc107; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #856404; margin-top: 0; font-size: 18px; margin-bottom: 20px;">📅 Appointment Details:</h3>
+        
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 15px 0; font-weight: bold; color: #856404; font-size: 16px; vertical-align: top;">📅 Scheduled Time:</td>
+                <td style="padding: 15px 0; color: #856404; font-weight: 600; font-size: 16px;">{{appointment_time}}</td>
+            </tr>
+        </table>
+    </div>
+    
+    <!-- Special Instructions Section -->
+    <div style="background-color: #e8f5e8; border-radius: 8px; padding: 25px; margin: 25px 0; border-left: 4px solid #28a745; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #2c5aa0; margin-top: 0; font-size: 18px; margin-bottom: 20px;">📝 Special Instructions:</h3>
+        
+        <div style="color: #333; font-size: 15px; line-height: 1.6; background-color: white; padding: 15px; border-radius: 5px;">
+            {{special_instructions}}
+        </div>
+    </div>
+    
+    <!-- Booking Reference Section -->
+    <div style="background-color: #f8f9fa; border-radius: 8px; padding: 25px; margin: 25px 0; border: 2px dashed #6c757d; text-align: center;">
+        <h3 style="color: #2c5aa0; margin-top: 0; font-size: 18px; margin-bottom: 15px;">🆔 Booking Reference</h3>
+        <div style="font-family: monospace; font-size: 16px; font-weight: bold; color: #495057; background-color: #e9ecef; padding: 15px; border-radius: 5px; letter-spacing: 1px;">
+            {{reference_number}}
+        </div>
+        <p style="color: #6c757d; margin: 10px 0 0 0; font-size: 13px;">Generated by Smart Voice AI Booking System</p>
+    </div>
+    
+    <!-- What to Expect -->
+    <div style="background-color: #e3f2fd; border-radius: 8px; padding: 25px; margin: 25px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #2c5aa0; margin-top: 0; font-size: 18px; margin-bottom: 15px;">📞 What to Expect</h3>
+        <ul style="margin: 0; padding-left: 25px; color: #333; line-height: 1.8;">
+            <li style="margin-bottom: 12px;">Our plumber will call you <strong>30 minutes before arrival</strong></li>
+            <li style="margin-bottom: 12px;">We'll bring all standard tools and parts needed for the job</li>
+            <li style="margin-bottom: 12px;">Payment can be made upon completion of work</li>
+            <li style="margin-bottom: 0;">All work comes with our standard warranty</li>
+        </ul>
+    </div>
+    
+    <!-- Important Notice -->
+    <div style="background-color: #ffebee; border: 1px solid #f48fb1; border-radius: 8px; padding: 25px; margin: 25px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #c62828; margin-top: 0; font-size: 18px; margin-bottom: 15px;">🚨 Need to Change or Cancel?</h3>
+        <p style="margin: 0; color: #c62828; line-height: 1.6; font-weight: 500;">
+            Please call us at <strong>{{company_phone}}</strong> at least 2 hours before your scheduled appointment time.
+            <br><br>
+            <strong>Reference this booking ID:</strong> {{reference_number}}
+        </p>
+    </div>
+    
+    <!-- Payment Options -->
+    <div style="background-color: #f0f8ff; border-radius: 8px; padding: 25px; margin: 25px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <h3 style="color: #2c5aa0; margin-top: 0; font-size: 18px; margin-bottom: 15px;">💳 Payment Options</h3>
+        <ul style="margin: 0; padding-left: 25px; color: #333; line-height: 1.6;">
+            <li style="margin-bottom: 8px;">💵 Cash</li>
+            <li style="margin-bottom: 8px;">💳 Credit/Debit Card</li>
+            <li style="margin-bottom: 0;">🏦 Bank Transfer</li>
+        </ul>
+    </div>
+    
+    <!-- Footer -->
+    <div style="background-color: #2c5aa0; color: white; padding: 30px; margin: 30px 0 0 0; text-align: center; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+        <h3 style="margin: 0 0 20px 0; font-size: 20px;">Thank you for choosing Usher Fix Plumbing!</h3>
+        <table role="presentation" style="width: 100%; margin: 0;">
+            <tr>
+                <td style="text-align: center; padding: 8px;">
+                    <span style="font-size: 16px; display: inline-block;">📞 {{company_phone}}</span>
+                </td>
+            </tr>
+            <tr>
+                <td style="text-align: center; padding: 8px;">
+                    <span style="font-size: 16px; display: inline-block;">📧 {{company_email}}</span>
+                </td>
+            </tr>
+            <tr>
+                <td style="text-align: center; padding: 8px;">
+                    <span style="font-size: 14px; opacity: 0.9; display: inline-block;">🌐 Professional Plumbing Services Brisbane</span>
+                </td>
+            </tr>
+        </table>
+    </div>
+    
+</div>
+
+</body>
+</html>

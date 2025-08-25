@@ -7,6 +7,22 @@ const openai = new OpenAI({
 });
 
 /**
+ * Check if a proposed time slot conflicts with existing appointments
+ */
+function checkTimeSlotConflicts(slot, existingAppointments) {
+  return existingAppointments.filter(apt => {
+    // Ensure we have valid date objects
+    const aptStart = apt.start instanceof Date ? apt.start : new Date(apt.start);
+    const aptEnd = apt.end instanceof Date ? apt.end : new Date(apt.end);
+    const slotStart = slot.start instanceof Date ? slot.start : new Date(slot.start);
+    const slotEnd = slot.end instanceof Date ? slot.end : new Date(slot.end);
+    
+    // Check for overlap: slot starts before appointment ends AND slot ends after appointment starts
+    return (slotStart < aptEnd && slotEnd > aptStart);
+  });
+}
+
+/**
  * AI-powered job duration estimation
  * Replaces hardcoded duration estimates with dynamic AI analysis
  */
@@ -576,9 +592,59 @@ async function scheduleAppointmentWithAI(customerData, issueDescription, previou
     // Step 6: AI time rounding for professional scheduling
     const timeRounding = await calculateSmartTimeRounding(calculatedStartTime, customerData.preferences);
     
-    // Step 7: Calculate end time
-    const appointmentStart = timeRounding.recommendedTime;
-    const appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedMinutes * 60000));
+    // CRITICAL FIX: Check for conflicts and find next available slot
+    let appointmentStart = timeRounding.recommendedTime;
+    let appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedMinutes * 60000));
+    
+    // Combine all appointments for conflict checking
+    const allExistingAppointments = [...previousAppointments, ...upcomingAppointments];
+    console.log(`🔍 Checking conflicts against ${allExistingAppointments.length} existing appointments...`);
+    
+    // Check for conflicts and resolve them
+    let attemptCount = 0;
+    const maxAttempts = 24; // Maximum 24 attempts (12 hours in 30-minute increments)
+    
+    while (attemptCount < maxAttempts) {
+      const proposedSlot = {
+        start: appointmentStart,
+        end: appointmentEnd
+      };
+      
+      // Check for conflicts
+      const conflicts = checkTimeSlotConflicts(proposedSlot, allExistingAppointments);
+      
+      if (conflicts.length === 0) {
+        // No conflicts found - slot is available
+        console.log(`✅ AI Scheduler found available slot after ${attemptCount} attempts: ${appointmentStart.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`);
+        break;
+      } else {
+        // Conflict found - move to next available slot
+        console.log(`⚠️ AI Scheduler slot conflict detected (attempt ${attemptCount + 1}):`, {
+          proposed: `${appointmentStart.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })} - ${appointmentEnd.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`,
+          conflicting: conflicts.map(c => `${c.start?.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })} - ${c.end?.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`).join(', ')
+        });
+        
+        // Find the end time of the latest conflicting appointment
+        const latestConflictEnd = Math.max(...conflicts.map(c => c.end?.getTime() || 0));
+        
+        // Schedule after the latest conflict with additional buffer
+        appointmentStart = new Date(latestConflictEnd + (gapAnalysis.recommendedGapMinutes * 60000));
+        appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedMinutes * 60000));
+        
+        attemptCount++;
+      }
+    }
+    
+    if (attemptCount >= maxAttempts) {
+      console.error('❌ AI Scheduler could not find available slot after maximum attempts');
+      // Fallback to next business day
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(9, 0, 0, 0); // 9 AM next day
+      appointmentStart = tomorrow;
+      appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedMinutes * 60000));
+      console.log(`📅 AI Scheduler fallback to next business day: ${appointmentStart.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`);
+    }
     
     const result = {
       start: appointmentStart,
@@ -590,7 +656,11 @@ async function scheduleAppointmentWithAI(customerData, issueDescription, previou
         job: jobAnalysis,
         travel: travelAnalysis,
         gap: gapAnalysis,
-        timeRounding: timeRounding
+        timeRounding: timeRounding,
+        conflictResolution: {
+          attempts: attemptCount,
+          conflictsFound: attemptCount > 0
+        }
       },
       confidence: 'high', // AI-driven = high confidence
       type: 'ai_optimized'

@@ -12,9 +12,70 @@ const {
   hasCompleteDetails
 } = require('./stateMachine');
 const { sendBookingConfirmationEmail } = require('../professional-email-service');
+const outlook = require('../outlook');
+const { addSessionAppointment } = require('./appointmentCache');
 
 // Simple in-memory appointment storage for testing/fallback
 let fallbackAppointments = [];
+
+/**
+ * Constructs a meaningful issue description from the conversation data
+ */
+function constructIssueDescription(stateMachine) {
+  try {
+    // Get the issue type from state machine
+    const issueType = stateMachine.issueType;
+    const clientData = stateMachine.clientData || {};
+    const customerData = stateMachine.customerData || {};
+    
+    // Build description based on issue type and collected responses
+    if (issueType === 'toilet') {
+      let description = 'Toilet';
+      
+      // Check for specific toilet issues from conversation responses
+      const toiletResponses = Object.keys(clientData).filter(key => key.startsWith('toilet_'));
+      
+      if (toiletResponses.length > 0) {
+        // Analyze responses to determine specific issue
+        const conversationHistory = stateMachine.conversationHistory || [];
+        const responses = conversationHistory.filter(item => item.type === 'user').map(item => item.content.toLowerCase());
+        
+        if (responses.some(r => r.includes('not flushing') || r.includes('not washing') || r.includes('stopped'))) {
+          description = 'Toilet not flushing properly';
+        } else if (responses.some(r => r.includes('leak') || r.includes('water'))) {
+          description = 'Toilet leaking';
+        } else if (responses.some(r => r.includes('blocked') || r.includes('clog'))) {
+          description = 'Toilet blocked';
+        } else if (responses.some(r => r.includes('running') || r.includes('keeps going'))) {
+          description = 'Toilet running continuously';
+        } else {
+          description = 'Toilet repair needed';
+        }
+      } else {
+        description = 'Toilet repair needed';
+      }
+      
+      return description;
+    }
+    
+    // Handle other issue types
+    if (issueType === 'drain') return 'Drain blockage or repair';
+    if (issueType === 'leak') return 'Plumbing leak repair';
+    if (issueType === 'hot_water') return 'Hot water system issue';
+    if (issueType === 'tap') return 'Tap or faucet repair';
+    
+    // Fallback: try to extract from stored issue description
+    if (customerData.issue) return customerData.issue;
+    if (customerData.issueDescription) return customerData.issueDescription;
+    
+    // Last resort fallback
+    return 'General plumbing service';
+    
+  } catch (error) {
+    console.log('⚠️ Error constructing issue description:', error.message);
+    return 'General plumbing service';
+  }
+}
 
 /**
  * Handles the complete booking request with fallback mechanisms
@@ -94,11 +155,12 @@ async function proceedToBookingWithSlot(recommendedSlot) {
           dynamicTravelTime = await travelOptimization.calculateTravelTime(lastLocation, customerAddress);
           dynamicTravelMinutes = travelOptimization.extractMinutesFromTravelTime(dynamicTravelTime);
           
-          // ALWAYS calculate dynamic service duration - no defaults
-          dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueType);
+          // ALWAYS calculate dynamic service duration using OpenAI first
+          dynamicServiceDuration = await travelOptimization.calculateServiceDurationEnhanced(issueType);
           
-          // Calculate total buffer: completion buffer + travel + service
-          dynamicTotalBuffer = 30 + dynamicTravelMinutes + dynamicServiceDuration;
+          // Calculate total buffer dynamically - no hardcoded values
+          const dynamicBuffer = travelOptimization.calculateDynamicBuffer(issueType, dynamicServiceDuration);
+          dynamicTotalBuffer = dynamicBuffer + dynamicTravelMinutes + dynamicServiceDuration;
           
           console.log(`🎯 Dynamic calculations - Travel: ${dynamicTravelTime}, Service: ${dynamicServiceDuration}min, Buffer: ${dynamicTotalBuffer}min`);
         }
@@ -112,11 +174,11 @@ async function proceedToBookingWithSlot(recommendedSlot) {
           // Force OpenAI calculation as last resort
           dynamicTravelTime = await travelOptimization.calculateTravelTimeWithOpenAI('Brisbane CBD, QLD 4000', customerAddress);
           if (!dynamicTravelTime) {
-            // Only if OpenAI completely fails, use Brisbane estimates
-            dynamicTravelTime = travelOptimization.estimateBrisbaneTravelTime('Brisbane CBD, QLD 4000', customerAddress);
+            // Only if OpenAI completely fails, use enhanced Brisbane estimates (which tries OpenAI again)
+            dynamicTravelTime = await travelOptimization.estimateBrisbaneTravelTimeEnhanced('Brisbane CBD, QLD 4000', customerAddress);
           }
           dynamicTravelMinutes = travelOptimization.extractMinutesFromTravelTime(dynamicTravelTime);
-          dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueType);
+          dynamicServiceDuration = await travelOptimization.calculateServiceDurationEnhanced(issueType);
           dynamicTotalBuffer = travelOptimization.calculateDynamicBuffer(issueType, dynamicServiceDuration) + dynamicTravelMinutes + dynamicServiceDuration;
           console.log(`🤖 Forced OpenAI/Brisbane calculation - Travel: ${dynamicTravelTime}, Service: ${dynamicServiceDuration}min`);
         } catch (forceError) {
@@ -127,10 +189,10 @@ async function proceedToBookingWithSlot(recommendedSlot) {
       }
     }
 
-    // Ensure service duration is ALWAYS calculated - no defaults allowed
+    // Ensure service duration is ALWAYS calculated using OpenAI first - no defaults allowed
     if (!dynamicServiceDuration || dynamicServiceDuration === null) {
-      console.log('🔧 Forcing service duration calculation...');
-      dynamicServiceDuration = travelOptimization.calculateServiceDuration(issueType);
+      console.log('🔧 Forcing OpenAI service duration calculation...');
+      dynamicServiceDuration = await travelOptimization.calculateServiceDurationEnhanced(issueType);
       console.log(`🔧 Service duration calculated: ${dynamicServiceDuration} minutes for ${issueType}`);
     }
 
@@ -194,6 +256,20 @@ async function proceedToBookingWithSlot(recommendedSlot) {
     
     transitionTo('booking_complete');
     
+    // Add appointment to session cache IMMEDIATELY to prevent double-booking
+    const sessionAppointment = addSessionAppointment({
+      start: appointment.start,
+      end: appointment.end,
+      location: stateMachine.customerData?.address,
+      customerName: stateMachine.customerData?.name,
+      issueDescription: stateMachine.customerData?.issue,
+      summary: `Plumbing Service - ${stateMachine.customerData?.name || 'Customer'}`,
+      description: `Customer: ${stateMachine.customerData?.name || 'N/A'}
+Phone: ${stateMachine.customerData?.phone || stateMachine.callerPhoneNumber || 'N/A'}
+Issue: ${stateMachine.customerData?.issue || 'Plumbing service'}
+Reference: ${appointment.reference}`
+    });
+    
     // Try to create actual calendar appointment
     try {
       const { getAccessToken, createAppointment } = require('../outlook');
@@ -244,10 +320,7 @@ Reference: ${appointment.reference}`,
         customerPhone: phoneNumber,
         appointmentTime: appointment.start,
         referenceNumber: appointment.reference,
-        issueDescription: stateMachine.customerData?.issue || 
-                         stateMachine.customerData?.issueDescription ||
-                         stateMachine.currentIssue?.description || 
-                         'Plumbing service',
+        issueDescription: constructIssueDescription(stateMachine),
         specialInstructions: stateMachine.customerData?.specialInstructions || 'Standard plumbing service - no special requirements',
         travelMinutes: appointment.travelTime,
         totalBufferMinutes: appointment.totalBuffer || 0,
@@ -360,7 +433,7 @@ async function proceedToBooking(userInput = '') {
             description: `Customer: ${stateMachine.customerData?.name || 'N/A'}
 Phone: ${stateMachine.customerData?.phone || stateMachine.callerPhoneNumber || 'N/A'}
 Email: ${stateMachine.customerData?.email || 'N/A'}
-Issue: ${stateMachine.customerData?.issue || 'Plumbing service'}
+Issue: ${constructIssueDescription(stateMachine)}
 Special Instructions: ${stateMachine.customerData?.specialInstructions || 'None'}
 Reference: ${appointment.reference}`,
             start: {
@@ -399,10 +472,7 @@ Reference: ${appointment.reference}`,
           customerPhone: phoneNumber,
           appointmentTime: appointment.start,
           referenceNumber: appointment.reference,
-          issueDescription: stateMachine.customerData?.issue || 
-                           stateMachine.customerData?.issueDescription ||
-                           stateMachine.currentIssue?.description || 
-                           'Plumbing service',
+          issueDescription: constructIssueDescription(stateMachine),
           specialInstructions: stateMachine.customerData?.specialInstructions || 'Standard plumbing service - no special requirements',
           travelMinutes: appointment.travelTime || '20-30 minutes', // Use string version for display
           totalBufferMinutes: appointment.totalBuffer || 0,
@@ -906,5 +976,6 @@ module.exports = {
   proceedToBookingWithSlot,
   findOptimalAppointmentSlot,
   generateAppointmentReference,
-  extractDataFromInput
+  extractDataFromInput,
+  constructIssueDescription
 };

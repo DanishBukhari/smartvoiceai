@@ -9,6 +9,7 @@ const {
   calculateSmartTimeRounding,
   scheduleAppointmentWithAI 
 } = require('./aiDrivenScheduler');
+const { getCombinedAppointments } = require('./appointmentCache');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -244,7 +245,8 @@ async function findOptimalAppointmentSlot(customerAddress, issueDescription, cus
     }
 
     // Get previous appointments for context
-    const existingAppointments = await getExistingAppointments(accessToken);
+    const calendarAppointments = await getExistingAppointments(accessToken);
+    const existingAppointments = getCombinedAppointments(calendarAppointments);
     
     // Prepare customer data with address
     const enrichedCustomerData = {
@@ -258,7 +260,7 @@ async function findOptimalAppointmentSlot(customerAddress, issueDescription, cus
       enrichedCustomerData,
       issueDescription,
       existingAppointments.slice(-5), // Last 5 appointments for context
-      []
+      existingAppointments // Pass all existing appointments for conflict checking
     );
     
     if (aiSchedulingResult) {
@@ -301,7 +303,8 @@ async function findOptimalAppointmentSlot(customerAddress, issueDescription, cus
     console.log(`🔧 Job Analysis - Duration: ${jobAnalysis.estimatedDuration}min, Priority: ${jobAnalysis.priority}, Type: ${jobAnalysis.issueType}`);
 
     // Step 2: Get existing appointments for location clustering
-    const existingAppointments = await getExistingAppointments(accessToken);
+    const calendarAppointments = await getExistingAppointments(accessToken);
+    const existingAppointments = getCombinedAppointments(calendarAppointments);
 
     // Step 3: Find appointments in similar locations with AI-enhanced distance analysis
     const nearbyAppointments = await findNearbyAppointmentsWithAI(customerAddress, existingAppointments);
@@ -399,16 +402,62 @@ async function calculateOptimalSlotWithAI({ customerAddress, jobAnalysis, nearby
     
     const gapAnalysis = await calculateOptimalAppointmentGap(previousJob, upcomingJob, travelAnalysis);
     
-    // Calculate start time
+    // Calculate initial start time
     const lastEndTime = lastAppointment?.end || new Date();
-    const calculatedStartTime = new Date(lastEndTime.getTime() + (gapAnalysis.recommendedGapMinutes * 60000));
+    let calculatedStartTime = new Date(lastEndTime.getTime() + (gapAnalysis.recommendedGapMinutes * 60000));
     
     // AI-powered time rounding
     const timeRounding = await calculateSmartTimeRounding(calculatedStartTime, {}, {});
     
-    // Calculate end time
-    const appointmentStart = timeRounding.recommendedTime;
-    const appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedDuration * 60000));
+    // CRITICAL FIX: Check for conflicts and find next available slot
+    let appointmentStart = timeRounding.recommendedTime;
+    let appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedDuration * 60000));
+    
+    // Check if the calculated slot conflicts with existing appointments
+    let attemptCount = 0;
+    const maxAttempts = 24; // Maximum 24 attempts (12 hours in 30-minute increments)
+    
+    while (attemptCount < maxAttempts) {
+      const proposedSlot = {
+        start: appointmentStart,
+        end: appointmentEnd
+      };
+      
+      // Check for conflicts
+      const conflicts = checkTimeSlotConflicts(proposedSlot, existingAppointments);
+      
+      if (conflicts.length === 0) {
+        // No conflicts found - slot is available
+        console.log(`✅ Found available slot after ${attemptCount} attempts: ${appointmentStart.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`);
+        break;
+      } else {
+        // Conflict found - move to next available slot
+        console.log(`⚠️ Slot conflict detected (attempt ${attemptCount + 1}):`, {
+          proposed: `${appointmentStart.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })} - ${appointmentEnd.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`,
+          conflicting: conflicts.map(c => `${c.start.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })} - ${c.end.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`).join(', ')
+        });
+        
+        // Find the end time of the latest conflicting appointment
+        const latestConflictEnd = Math.max(...conflicts.map(c => c.end.getTime()));
+        
+        // Schedule after the latest conflict with additional buffer
+        appointmentStart = new Date(latestConflictEnd + (gapAnalysis.recommendedGapMinutes * 60000));
+        appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedDuration * 60000));
+        
+        attemptCount++;
+      }
+    }
+    
+    if (attemptCount >= maxAttempts) {
+      console.error('❌ Could not find available slot after maximum attempts');
+      // Fallback to next business day
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(9, 0, 0, 0); // 9 AM next day
+      appointmentStart = tomorrow;
+      appointmentEnd = new Date(appointmentStart.getTime() + (jobAnalysis.estimatedDuration * 60000));
+      console.log(`📅 Fallback to next business day: ${appointmentStart.toLocaleString('en-AU', { timeZone: 'Australia/Brisbane' })}`);
+    }
     
     return {
       start: appointmentStart,
@@ -421,7 +470,11 @@ async function calculateOptimalSlotWithAI({ customerAddress, jobAnalysis, nearby
         job: jobAnalysis,
         travel: travelAnalysis,
         gap: gapAnalysis,
-        timeRounding: timeRounding
+        timeRounding: timeRounding,
+        conflictResolution: {
+          attempts: attemptCount,
+          conflictsFound: attemptCount > 0
+        }
       },
       type: 'ai_enhanced',
       confidence: 'high'

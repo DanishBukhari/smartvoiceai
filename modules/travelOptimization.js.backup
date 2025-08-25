@@ -107,93 +107,6 @@ Response format: Just the time range, nothing else.`;
   }
 }
 
-/**
- * Calculate service duration using OpenAI API based on issue description
- * This provides intelligent estimates for plumbing job complexity
- */
-async function calculateServiceDurationWithOpenAI(issueDescription = '') {
-  try {
-    // Check if OpenAI API key is available
-    if (!process.env.OPENAI_API_KEY) {
-      console.log('🤖 OpenAI API key not configured for service duration');
-      return null;
-    }
-
-    const { OpenAI } = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-    const prompt = `Estimate the service duration for this plumbing issue:
-
-Issue: ${issueDescription}
-
-Consider these factors for a professional plumber in Brisbane:
-- Job complexity and parts required
-- Typical access and setup time
-- Testing and cleanup time
-- Experience level of professional plumber
-
-Examples:
-- Simple drain cleaning: 45-60 minutes
-- Toilet installation: 90-120 minutes
-- Emergency leak repair: 60-90 minutes
-- Hot water system repair: 75-120 minutes
-- Tap replacement: 30-45 minutes
-
-Provide only the estimated duration in minutes as a single number (e.g., "75").
-Choose the most realistic time for a professional to complete the job properly.`;
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a professional plumbing expert. Estimate realistic service durations for plumbing jobs in minutes. Always respond with just a number representing minutes."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      max_tokens: 10,
-      temperature: 0.2
-    });
-
-    const durationStr = response.choices[0]?.message?.content?.trim();
-    const duration = parseInt(durationStr);
-    
-    if (duration && duration > 0 && duration <= 300) { // Reasonable range: 5 minutes to 5 hours
-      console.log(`🤖 OpenAI service duration: ${duration} minutes for "${issueDescription}"`);
-      return duration;
-    }
-
-    console.log(`🤖 OpenAI service duration invalid: "${durationStr}"`);
-    return null;
-
-  } catch (error) {
-    console.log(`🤖 OpenAI service duration error: ${error.message}`);
-    return null;
-  }
-}
-
-/**
- * Enhanced service duration calculation with OpenAI integration
- * This tries OpenAI first, then falls back to rule-based calculation
- */
-async function calculateServiceDurationEnhanced(issueDescription) {
-  try {
-    // Try OpenAI first for intelligent analysis
-    const openaiDuration = await calculateServiceDurationWithOpenAI(issueDescription);
-    if (openaiDuration && openaiDuration > 0) {
-      return openaiDuration;
-    }
-  } catch (error) {
-    console.log('🤖 OpenAI service duration failed, using rule-based calculation');
-  }
-  
-  // Fallback to rule-based calculation
-  return calculateServiceDuration(issueDescription);
-}
-
 async function calculateTravelTime(origin, destination, accessToken = null) {
   // Ensure we have a proper origin
   if (!origin || origin === 'null' || origin === 'undefined') {
@@ -423,6 +336,74 @@ async function findMostEfficientSlot(accessToken, customerAddress, issueDescript
   }
 }
 
+/**
+ * Calculate service duration using OpenAI API based on issue description
+ * This provides intelligent estimates for plumbing job complexity
+ */
+async function calculateServiceDurationWithOpenAI(issueDescription = '') {
+  try {
+    // Check if OpenAI API key is available
+    if (!process.env.OPENAI_API_KEY) {
+      console.log('🤖 OpenAI API key not configured for service duration');
+      return null;
+    }
+
+    const { OpenAI } = require('openai');
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+    const prompt = `Estimate the service duration for this plumbing issue:
+
+Issue: ${issueDescription}
+
+Consider these factors for a professional plumber in Brisbane:
+- Job complexity and parts required
+- Typical access and setup time
+- Testing and cleanup time
+- Experience level of professional plumber
+
+Examples:
+- Simple drain cleaning: 45-60 minutes
+- Toilet installation: 90-120 minutes
+- Emergency leak repair: 60-90 minutes
+- Hot water system repair: 75-120 minutes
+- Tap replacement: 30-45 minutes
+
+Provide only the estimated duration in minutes as a single number (e.g., "75").
+Choose the most realistic time for a professional to complete the job properly.`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: "You are a professional plumbing expert. Estimate realistic service durations for plumbing jobs in minutes. Always respond with just a number representing minutes."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      max_tokens: 10,
+      temperature: 0.2
+    });
+
+    const durationStr = response.choices[0]?.message?.content?.trim();
+    const duration = parseInt(durationStr);
+    
+    if (duration && duration > 0 && duration <= 300) { // Reasonable range: 5 minutes to 5 hours
+      console.log(`🤖 OpenAI service duration: ${duration} minutes for "${issueDescription}"`);
+      return duration;
+    }
+
+    console.log(`🤖 OpenAI service duration invalid: "${durationStr}"`);
+    return null;
+
+  } catch (error) {
+    console.log(`🤖 OpenAI service duration error: ${error.message}`);
+    return null;
+  }
+}
+
 function calculateServiceDuration(issueDescription) {
   if (!issueDescription || typeof issueDescription !== 'string') {
     console.log('⚠️ No issue description provided, using emergency default');
@@ -483,6 +464,80 @@ function calculateServiceDuration(issueDescription) {
   // Default for general plumbing issues
   console.log('🔧 General plumbing issue, setting duration to 70 minutes');
   return 70; // 1 hour 10 minutes for general work
+}
+
+/**
+ * Enhanced service duration calculation with OpenAI integration
+ * This tries OpenAI first, then falls back to rule-based calculation
+ */
+async function calculateServiceDurationEnhanced(issueDescription) {
+  try {
+    // Try OpenAI first for intelligent analysis
+    const openaiDuration = await calculateServiceDurationWithOpenAI(issueDescription);
+    if (openaiDuration && openaiDuration > 0) {
+      return openaiDuration;
+    }
+  } catch (error) {
+    console.log('🤖 OpenAI service duration failed, using rule-based calculation');
+  }
+  
+  // Fallback to rule-based calculation
+  return calculateServiceDuration(issueDescription);
+}
+  if (issue.includes('hot water') || issue.includes('water heater') || issue.includes('boiler') ||
+      issue.includes('gas') || issue.includes('electric hot water')) {
+    return 75; // 1.25 hours for hot water systems
+  }
+  
+  // Drain and sewer issues can be complex
+  if (issue.includes('drain') || issue.includes('sewer') || issue.includes('blocked') ||
+      issue.includes('pipe') || issue.includes('clog')) {
+    return 75; // 1.25 hours for drainage issues
+  }
+  
+  // Toilet repairs vary by complexity
+  if (issue.includes('toilet')) {
+    if (issue.includes('new') || issue.includes('install') || issue.includes('replace')) {
+      return 90; // 1.5 hours for toilet replacement
+    } else if (issue.includes('repair') || issue.includes('fix') || issue.includes('broken')) {
+      return 60; // 1 hour for toilet repairs
+    } else {
+      return 45; // 45 minutes for simple toilet issues
+    }
+  }
+  
+  // Tap/faucet issues usually quicker
+  if (issue.includes('tap') || issue.includes('faucet') || issue.includes('drip')) {
+    if (issue.includes('new') || issue.includes('install') || issue.includes('replace')) {
+      return 60; // 1 hour for tap replacement
+    } else {
+      return 30; // 30 minutes for tap repairs
+    }
+  }
+  
+  // Leak repairs depend on complexity
+  if (issue.includes('leak') || issue.includes('leaking')) {
+    if (issue.includes('wall') || issue.includes('ceiling') || issue.includes('hidden')) {
+      return 90; // 1.5 hours for complex leak detection
+    } else {
+      return 60; // 1 hour for standard leaks
+    }
+  }
+  
+  // Maintenance and inspections
+  if (issue.includes('maintenance') || issue.includes('inspection') || issue.includes('check') ||
+      issue.includes('service')) {
+    return 45; // 45 minutes for maintenance
+  }
+  
+  // Multiple issues mentioned
+  const issueCount = (issue.match(/\band\b|\bplus\b|\balso\b|\badditionally\b/g) || []).length;
+  if (issueCount > 0) {
+    return 90 + (issueCount * 30); // Base 90 min + 30 min per additional issue
+  }
+  
+  // Default for unspecified general plumbing work
+  return 60; // 1 hour standard
 }
 
 /**
@@ -645,6 +700,7 @@ module.exports = {
   extractMinutesFromTravelTime,
   roundToNextAppointmentSlot,
   estimateBrisbaneTravelTime,
+  estimateBrisbaneTravelTimeEnhanced,
   updateLastBookedJobLocation,
   getLastBookedJobLocation,
   refreshLastBookedJobLocation,
