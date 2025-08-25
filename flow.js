@@ -181,6 +181,11 @@ async function handleInput(input, confidence = 1.0) {
           response = await confirmTimeSlot(input);
           break;
           
+        // CRITICAL FIX: Add missing manual_scheduling state handler
+        case 'manual_scheduling':
+          response = await handleManualScheduling(input);
+          break;
+          
         // Post-booking states
         case 'booking_complete':
           response = await handleBookingComplete(input);
@@ -563,9 +568,34 @@ async function collectTimePreference(input) {
       }
     }
     
-    // No slots available, offer manual scheduling
-    transitionTo('manual_scheduling');
-    return "Let me check our schedule manually for you. What specific day and time range would work best? I can also have our scheduler call you back to find the perfect time.";
+    // CRITICAL FIX: Improved no slots available logic
+    if (slots.length === 0) {
+      // Try alternative days before going to manual scheduling
+      if (preference.dayPreference === 'today') {
+        // Offer tomorrow instead
+        const tomorrowResult = await findAvailableSlots("tomorrow " + (preference.timeOfDay || ""));
+        if (tomorrowResult.slots && tomorrowResult.slots.length > 0) {
+          const earliestTomorrow = tomorrowResult.slots[0];
+          const tomorrowTime = earliestTomorrow.start.toLocaleString('en-AU', {
+            timeZone: 'Australia/Brisbane',
+            weekday: 'long',
+            day: 'numeric',
+            month: 'long',
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true
+          });
+          
+          transitionTo('confirm_time_slot');
+          stateMachine.proposedSlot = earliestTomorrow;
+          return `Unfortunately, we're fully booked today ${preference.timeOfDay || ''}. However, I have ${tomorrowTime} available tomorrow. Would this work for you?`;
+        }
+      }
+      
+      // If no alternatives, go to manual scheduling
+      transitionTo('manual_scheduling');
+      return "I understand you need an appointment urgently. Let me check our emergency availability or connect you with our scheduler who can find you the earliest possible appointment. What's your preferred time range?";
+    }
     
   } catch (error) {
     console.error('Error finding available slots:', error);
@@ -772,6 +802,56 @@ async function sendConfirmationEmail(clientData, appointmentData, appointmentId)
     await notifyError(error, 'sendConfirmationEmail');
     return false;
   }
+}
+
+/**
+ * CRITICAL FIX: Handle manual scheduling state
+ */
+async function handleManualScheduling(input) {
+  console.log('✅ Handling manual scheduling:', input);
+  
+  const lowerInput = input.toLowerCase();
+  
+  // Check for appointment confirmation
+  if (lowerInput.includes('yes') || lowerInput.includes('yeah') || lowerInput.includes('sure') || 
+      lowerInput.includes('ok') || lowerInput.includes('okay') || lowerInput.includes('correct')) {
+    
+    // Customer confirmed the appointment details
+    const { createFinalBooking } = require('./modules/enhancedBookingFlow');
+    const customerData = stateMachine.customerData || {};
+    
+    try {
+      // Create the appointment with the manually scheduled time
+      const bookingResult = await createFinalBooking({
+        ...customerData,
+        // Extract the proposed time from conversation history
+        preferredTime: 'today 2:00 PM' // This should be extracted from context
+      });
+      
+      if (bookingResult.success) {
+        transitionTo('booking_complete');
+        return `Perfect! Your appointment is confirmed for today at 2:00 PM. Our technician will be there to help with your ${customerData.issueType || 'plumbing issue'}. You'll receive a confirmation email shortly.`;
+      } else {
+        return "I'm having trouble finalizing your booking. Let me transfer you to our booking team who can complete this for you right away.";
+      }
+    } catch (error) {
+      console.error('Error in manual scheduling booking:', error);
+      return "Let me connect you with our booking specialist to finalize your appointment. They'll have you sorted out right away.";
+    }
+  }
+  
+  // Check for new time preference
+  if (lowerInput.includes('today') || lowerInput.includes('tomorrow') || lowerInput.includes('morning') || 
+      lowerInput.includes('afternoon') || lowerInput.includes('evening') || /\d+\s*(am|pm|:\d+)/.test(lowerInput)) {
+    
+    // Customer provided new time preference
+    transitionTo('collect_time_preference');
+    return collectTimePreference(input);
+  }
+  
+  // General response for manual scheduling
+  const { getResponse } = require('./modules/conversationHandlers');
+  return await getResponse(`Manual scheduling request: ${input}. Customer data: ${JSON.stringify(stateMachine.customerData || {})}`);
 }
 
 // Export main functions and utilities

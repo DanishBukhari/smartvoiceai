@@ -68,35 +68,40 @@ function applyContextualCorrections(input, context) {
 }
 
 /**
- * Apply plumbing-specific corrections
+ * Apply plumbing-specific corrections - ENHANCED WITH CONTEXT AWARENESS
  */
 function applyPlumbingCorrections(input) {
+  const lowerInput = input.toLowerCase();
+  
+  // CRITICAL FIX: Only apply corrections when contextually appropriate
+  // Don't replace common words unless we're sure they're misheard plumbing terms
+  
   const plumbingCorrections = {
-    // Toilet issues
+    // Toilet issues - only when likely misheard
     'flash property': "toilet that won't flush",
-    'flashing': 'flushing',
-    'flash': 'flush',
+    'flashing issues': 'flushing issues',
     'toilet toy': 'toilet',
     'toy let': 'toilet',
-    'toy': 'toilet',
     
-    // Sink issues
-    'sing': 'sink',
-    'think': 'sink',
+    // Sink issues - only isolated words or clear misheard terms
+    'sing tap': 'sink tap',
+    'sing drain': 'sink drain',
+    'kitchen sing': 'kitchen sink',
+    'bathroom sing': 'bathroom sink',
+    // REMOVED DANGEROUS: 'think': 'sink' - this corrupted "I think"
     
     // Pipe issues
-    'buy': 'pipe',
-    'type': 'pipe',
+    'buy pipe': 'burst pipe',
+    'type leak': 'pipe leak',
     
     // Leak issues
-    'lake': 'leak',
-    'week': 'leak',
-    'lick': 'leak',
+    'lake under': 'leak under',
+    'week dripping': 'leak dripping',
+    'lick sound': 'leak sound',
     
     // Hot water issues
-    'hot water': 'hot water',
-    'hard water': 'hot water',
-    'hot quarter': 'hot water',
+    'hard water system': 'hot water system',
+    'hot quarter tank': 'hot water tank',
     
     // General plumbing
     'plumber': 'plumber',
@@ -105,9 +110,14 @@ function applyPlumbingCorrections(input) {
   };
   
   let corrected = input;
+  
+  // CRITICAL FIX: Only apply corrections for multi-word phrases or clearly misheard terms
+  // Don't replace single common words that might be used in normal conversation
   for (const [wrong, right] of Object.entries(plumbingCorrections)) {
-    const regex = new RegExp(wrong, 'gi');
-    corrected = corrected.replace(regex, right);
+    if (wrong.includes(' ') || wrong.length > 6) { // Only replace phrases or longer words
+      const regex = new RegExp(wrong, 'gi');
+      corrected = corrected.replace(regex, right);
+    }
   }
   
   return corrected;
